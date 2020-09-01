@@ -66,41 +66,29 @@ class TFLSHAttention(tf.keras.Model):
         rot_size = n_buckets #rotation몇번할꺼냐 
 
         rotations_shape = (
-            batch_size if self._random_rotations_per_head else 1, #head마다 batch개 필요할때 
+            batch_size , #head마다 batch개 필요할때 
             vecs.shape[-1],
-            self.n_hashes if self._rehash_each_round else 1,
+            self.n_hashes ,
             rot_size // 2)
         #rotations_shape[0] == 1 일때 해당차원 batch size로 뿔린다
-        random_rotations = tf.broadcast_to(tf.random.normal(rotations_shape), (batch_size, vecs.shape[-1], self.n_hashes if self._rehash_each_round else 1, rot_size // 2))
+        random_rotations = tf.random.normal(rotations_shape)
 
         dropped_vecs = self.dropout_for_hash(vecs) #그냥 drop out
-        rotated_vecs = tf.einsum('btf,bfhi->bhti', dropped_vecs, random_rotations)
-        if self._rehash_each_round:
-            rotated_vecs = tf.concat([rotated_vecs, -rotated_vecs], axis=-1)
+        rotated_vecs = tf.einsum('btf,bfhi->bthi', dropped_vecs, random_rotations)
+        rotated_vecs = tf.transpose(rotated_vecs,perm=[0, 2, 1, 3])
+        rotated_vecs = tf.concat([rotated_vecs, -rotated_vecs], axis=-1)
 
-            buckets = tf.math.argmax(rotated_vecs, axis=-1)
-            # buckets is now (self.n_hashes, seqlen). Next we add offsets so that
-            # bucket numbers from different hashing rounds don't overlap.
-            offsets = tf.range(self.n_hashes) #[0..self.n_hashes-1]
-            offsets = tf.reshape(offsets * n_buckets, (1, -1, 1))#[0..n_buckets*(self.n_hashes-1)]    argmax값들이 다른 Hash round와 중복하지 않기위해 값을 곱하였다.  ex) [0,n_buckets,2*n_buckets,..]
-            
-            offsets = tf.cast(offsets, tf.int64)
-            buckets = tf.reshape(buckets + offsets, (batch_size, -1,)) # batch size 남기고 collapse
-        else:
-            rotated_vecs = tf.concat([rotated_vecs, -rotated_vecs], axis=-1)
-            # In this configuration, we map each item to the top self.n_hashes buckets
-            rotated_vecs = tf.squeeze(rotated_vecs, axis=0)
-            bucket_range = tf.range(rotated_vecs.shape[-1])
-            bucket_range = tf.reshape(bucket_range, (1, -1))
-            bucket_range = tf.broadcast_to(bucket_range, rotated_vecs.shape)
+        buckets = tf.math.argmax(rotated_vecs, axis=-1)
+        # buckets is now (batch, self.n_hashes, seqlen). Next we add offsets so that
+        # bucket numbers from different hashing rounds don't overlap.
+        offsets = tf.range(self.n_hashes) #[0..self.n_hashes-1]
+        offsets = tf.reshape(offsets * n_buckets, (1, -1, 1))#[0..n_buckets*(self.n_hashes-1)]    argmax값들이 다른 Hash round와 중복하지 않기위해 값을 곱하였다.  ex) [0,n_buckets,2*n_buckets,..]
+        
+        offsets = tf.cast(offsets, tf.int64)
+        buckets = tf.reshape(buckets + offsets, (batch_size, -1,)) # batch size 남기고 collapse
 
-            _, buckets = sort_key_val(rotated_vecs, bucket_range, axis=-1)
-            buckets = buckets[:, -self.n_hashes:]
 
-            h, *_ = buckets.shape 
-            buckets = tf.reshape(buckets.permute((*_, h)), (-1,))
-
-        return buckets
+        return buckets#(batch, self.n_hashes*seqlen)
 
     def call(self, qk, v):
         
@@ -136,7 +124,7 @@ class TFLSHAttention(tf.keras.Model):
         st = (sticker % seqlen) #index참조하기위해 다시 원상복구  seqlen * buckets 부분 필요없어짐 
 
         #chunk 안에emb값이 바슷한것끼리 묶임 , n_hash는 분리됨아직 
-        sqk = batched_index_select(qk, st) #batch, seqlen*n_hashes,emb_dim n_hash #차원에 있는 것들은 같은 임베딩 고를 확률 높음  hash 값 같기떄문에 
+        sqk = batched_index_select(qk, st) #batch, seqlen*n_hashes,emb_dim #차원에 있는 것들은 같은 임베딩 고를 확률 높음  hash 값 같기떄문에 
         
         sv = batched_index_select(v, st)
 
@@ -178,13 +166,13 @@ class TFLSHAttention(tf.keras.Model):
    
             mask = bq_t[:, :, :, None] < bkv_t[:, :, None, :] #index 관한 마스크 >t 인것들 마스킹 
             #tf.print(mask)
-            dots = tf.math.multiply(dots, (1-tf.cast(mask, tf.float32))) + (tf.cast(mask, tf.float32)) * (tf.float32.min)
+            dots = tf.math.multiply(dots, (1-tf.cast(mask, tf.float32))) + (tf.cast(mask, tf.float32)) * (-1e9)
             del mask
     
         # Mask out attention to self except when no other targets are available.
         self_mask = bq_t[:, :, :, None] == bkv_t[:, :, None, :] # 자기자신인것 index마스킹 
         #tf.print(self_mask)
-        dots = tf.math.multiply(dots, (1-tf.cast(self_mask, tf.float32))) + (tf.cast(self_mask, tf.float32)) * (tf.float32.min)
+        dots = tf.math.multiply(dots, (1-tf.cast(self_mask, tf.float32))) + (tf.cast(self_mask, tf.float32)) * (-1e9)
         del self_mask
         # Mask out attention to other hash buckets.
 
@@ -193,16 +181,11 @@ class TFLSHAttention(tf.keras.Model):
             bucket_mask = bq_buckets[:, :, :, None] != bkv_buckets[:, :, None, :] #내용중 자기 랑 다른 Hash인것들 2*chunk size 단위로 마스킹 
             #tf.print(bucket_mask)
           
-            dots = tf.math.multiply(dots, (1-tf.cast(bucket_mask, tf.float32))) + (tf.cast(bucket_mask, tf.float32)) * (tf.float32.min)
+            dots = tf.math.multiply(dots, (1-tf.cast(bucket_mask, tf.float32))) + (tf.cast(bucket_mask, tf.float32)) * (-1e9)
             
             #tf.print(dots)
             #tf.print(bucket_mask)
-            del bucket_mask
-
-
-
-        # Softmax.
-        dots_logsumexp = tf.math.reduce_logsumexp(dots, axis=-1, keepdims=True) #2*chunk 에 대한 logit 
+        dots_logsumexp = tf.math.reduce_logsumexp(dots, axis=-1, keepdims=True) #2*chunk 에 대한 partition function 
 
         dots = tf.exp(dots - dots_logsumexp)
         dots = self.dropout(dots)
@@ -218,7 +201,7 @@ class TFLSHAttention(tf.keras.Model):
                 super(UnsortLogits, self).__init__()
             
             def call(self, so, slogits):
-                so, slogits = tf.stop_gradient(so), tf.stop_gradient(slogits)
+                #so, slogits = tf.stop_gradient(so), tf.stop_gradient(slogits)
 
                 o = batched_index_select(so, undo_sort)
                 _, logits = sort_key_val(sticker, slogits, axis=-1)
@@ -238,14 +221,13 @@ class TFLSHAttention(tf.keras.Model):
             logits=tf.cast(logits, tf.float32)
 
 
-            logits_logsumexp =  tf.math.reduce_logsumexp(logits, axis=1, keepdims=True)
+            logits_logsumexp =  tf.math.reduce_logsumexp(logits, axis=1, keepdims=True)#(batch_size, 1, seqlen, 1)
 
 
             probs = tf.exp(logits - logits_logsumexp)# softmax to do weight sum on n_hashes dim ###(batch_size, self.n_hashes, seqlen, 1)
 
             out = tf.reduce_sum(o * probs, axis=1)
-        #tf.print("output : batch, seqlen, dim")
-        #tf.print(out)
+ 
         
         assert out.shape == v.shape
         return out, buckets
@@ -281,7 +263,7 @@ class TFLSHSelfAttention(tf.keras.Model):
 
         qk = merge_heads(qk)
         v = merge_heads(v)
-
+        
         outputs = process_inputs_chunk(self.lsh_attn, qk, v, chunks=self.attn_chunks)
         attn_out = tf.concat([output for (output, _) in outputs], axis=0)
 

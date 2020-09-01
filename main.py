@@ -8,8 +8,9 @@ import sentencepiece as spm
 import os 
 import functools
 
+
+#settings 
 seq_length = 3200
-#seq_length = 12800
 batch_size = 2
 #_ROOT = os.path.abspath(os.path.dirname(__file__))
 
@@ -20,7 +21,7 @@ BOS_ID = 3
 EOS_ID = 4
 trsh = 5
 vocab_size = 20000
-learning_rate=0.1
+learning_rate=5e-5
 
 
         
@@ -83,6 +84,7 @@ model_tf = TFReformerLM(
     weight_tie = False,   # tie parameters of each layer for no memory per additional depth
     attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
     use_full_attn = False   # use full self attention, for comparison
+ 
 )
 
 #training settings 
@@ -90,19 +92,20 @@ loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
             from_logits=True, reduction='none', name='loss')
 accuracy_object = tf.keras.metrics.SparseCategoricalAccuracy(
             name='accuracy')
-optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-                                                          epsilon=1e-9)
+train_loss = tf.keras.metrics.Mean(name='train_loss')
 
+model_tf.set_optimizer(tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                                          epsilon=1e-9))
 
 print("start training")
 for (step, (inputs, targets)) in enumerate(d):
-    model_tf.build(input_shape=(batch_size,seq_length))
-    model_tf.summary()
+
     #y = model_tf(inputs)
     #loss = tf.reduce_mean(get_loss(targets, y ,loss_object))
     #print(loss)
     #print(y)
-    model_tf.train_step(inputs,targets,loss_object)
-    break
+    loss = model_tf.train_step(inputs,targets,loss_object,train_loss)
+    print(loss)
+    
 
 

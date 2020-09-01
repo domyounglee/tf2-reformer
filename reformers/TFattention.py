@@ -29,7 +29,7 @@ def mask_fill_inf(matrix, mask):
     num = 3.4 * math.pow(10, 38)
     return (matrix * mask) + (-((negmask * num + num) - num))
 
-class MultiHeadAttention(tf.keras.layers.Layer):
+class MultiHeadAttention(tf.keras.Model):
 
     def __init__(self, d_model, num_heads, name="multi_head_attention"):
         super(MultiHeadAttention, self).__init__(name=name)
@@ -43,16 +43,46 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         self.value_dense = Dense(units=d_model)
         self.dense = Dense(units=d_model)
 
-    def split_heads(self, inputs, batch_size):
-        inputs = tf.reshape(
-            inputs, shape=(batch_size, -1, self.num_heads, self.depth))
-        return tf.transpose(inputs, perm=[0, 2, 1, 3])
+    def merge_heads(self,v,batch_size):
+        return tf.reshape(tf.transpose(tf.reshape(v, (batch_size, -1, self.num_heads, self.depth)), perm=[0, 2, 1, 3]), (batch_size , -1, self.d_model)) 
+
+    def split_heads(self,v,batch_size):
+        return tf.transpose(tf.reshape(v, (batch_size, -1, self.num_heads, self.depth)), perm=[0, 2, 1, 3])
+
+
+    def scaled_dot_product(self, q, k, v):
+        matmul_qk = tf.matmul(q, k, transpose_b=True)  # (..., seq_len_q, seq_len_k)
+        dk = tf.cast(tf.shape(k)[-1], tf.float32)
+        scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+        
+
+        dk = tf.cast(tf.shape(k)[-1], tf.float32)
+        scaled_attention_logits = scaled_attention_logits / tf.math.sqrt(dk)
+
+
+        def create_look_ahead_mask(size):
+            mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+            return mask  # (seq_len, seq_len) 
+        mask = create_look_ahead_mask(tf.shape(k)[-2])
+      
+        if mask is not None:
+            scaled_attention_logits += (mask * -1e9)
+
+
+        attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
+
+        attention_weights = tf.nn.dropout(attention_weights, rate=0.1, name="attn_dropout")
+        output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
+
+        
+
+        return output, attention_weights
 
     def call(self, inputs):
-        query, key, value, mask = inputs['query'], inputs['key'], inputs[
-            'value'], inputs['mask']
+        query, key, value = inputs['query'], inputs['key'], inputs[
+            'value']
         batch_size = tf.shape(query)[0]
-
+        dim = tf.shape(query)[-1]
         # linear layers
         query = self.query_dense(query)
         key = self.key_dense(key)
@@ -63,12 +93,12 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         key = self.split_heads(key, batch_size)
         value = self.split_heads(value, batch_size)
 
-        scaled_attention = scaled_dot_product_attention(query, key, value, mask)
-        scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
-        concat_attention = tf.reshape(scaled_attention,
-                                    (batch_size, -1, self.d_model))
-
-        outputs = self.dense(concat_attention)
+        output,attention_map = self.scaled_dot_product(query, key, value)
+        #scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
+        #concat_attention = tf.reshape(scaled_attention,
+        #                            (batch_size, -1, self.d_model))
+        scaled_attention = self.merge_heads(output,batch_size)
+        outputs = self.dense(scaled_attention)
         return outputs
 
 
@@ -76,21 +106,16 @@ class TFSelfAttention(tf.keras.Model):
     def __init__(self, emb, heads = 8, causal = False):
         super().__init__()
         assert emb % heads == 0, 'dimensions must be divisible by number of heads'
-        self.attn = MultiheadAttention(emb, heads)
-        self.to_out = Dense(emb, emb)
+        self.attn = MultiHeadAttention(emb, heads)
+        self.to_out = Dense(emb)
         self.causal = causal
 
     def call(self, inputs):
         b, t, e = inputs.shape
-        inputs = tf.transpose(inputs, (0, 1))
 
-        attn_mask = tf.zeros(t, t)
-        if self.causal:
-            causal_mask = tf.triu(tf.ones(t, t) == 1, 1)
-            mask_fill_inf(attn_mask, causal_mask)
 
-        output = self.attn({'query' : x, 'key' : x, 'value' : x, 'mask' : attn_mask})
-        return self.to_out(tf.transpose(output, (0, 1)))
+        output = self.attn({'query' : inputs, 'key' : inputs, 'value' : inputs})
+        return self.to_out(output)
 
 
 class TFFeedForward(tf.keras.Model):

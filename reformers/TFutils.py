@@ -65,7 +65,7 @@ def batched_index_select(values, indices):
     return tf.gather(flatten_values, indices+offset)
 
 def process_inputs_chunk(fn, *args, chunks=1):
-    chunked_inputs = list(map(lambda x: tf.split(x, chunks, axis=0), args))
+    chunked_inputs = list(map(lambda x: tf.split(x, chunks, axis=-1), args))
     outputs = [fn(*input_pair) for input_pair in zip(*chunked_inputs)] #chunking 된 q ,kv 끼리 묶여서 input_pair를 만든다. 
     return outputs
 

@@ -23,7 +23,7 @@
 import tensorflow as tf
 from tensorflow.keras.layers import Embedding, LayerNormalization, Dense
 from .TFefficient_attention import TFLSHAttention, TFLSHSelfAttention
-from .TFattention import TFSelfAttention, TFFeedForward
+from .TFattention import TFSelfAttention, TFFeedForward,MultiHeadAttention
 from .TFutils import cache_fn, Chunk, WithNorm
 from .blocks import ReversibleBlock, ReversibleSequence
 
@@ -69,20 +69,34 @@ class TFReformerLM(tf.keras.Model):
         super().__init__()
         self.token_emb = Embedding(num_tokens, emb)
         self.pos_emb = Embedding(max_seq_len, emb)
-        self.reformer = TFReformer(emb, depth, max_seq_len, heads = heads,lsh_attend_across_buckets = True, bucket_size = bucket_size, n_hashes = n_hashes, ff_chunks = ff_chunks, attn_chunks = attn_chunks, causal = causal, weight_tie = weight_tie, lsh_dropout = lsh_dropout, random_rotations_per_head = random_rotations_per_head, twin_attention = twin_attention, use_scale_norm = use_scale_norm, use_full_attn = use_full_attn)
+        self.reformer = TFReformer(emb, depth, max_seq_len, heads = heads,lsh_attend_across_buckets = False, bucket_size = bucket_size, n_hashes = n_hashes, ff_chunks = ff_chunks, attn_chunks = attn_chunks, causal = causal, weight_tie = weight_tie, lsh_dropout = lsh_dropout, random_rotations_per_head = random_rotations_per_head, twin_attention = twin_attention, use_scale_norm = use_scale_norm, use_full_attn = use_full_attn)
         self.to_logits = Dense(num_tokens)
         self.reformer_output=None
+        self.optimizer = None
+
+    def set_optimizer(self,optimizer):
+        self.optimizer = optimizer
+
+
     def call(self, inputs):
-        
-        inputs = self.token_emb(inputs) + self.pos_emb(tf.range(inputs.shape[1]))
+        self.inputs = self.token_emb(inputs)
+        inputs = self.inputs + self.pos_emb(tf.range(inputs.shape[1]))
         inputs = self.reformer(inputs)
         self.reformer_output = inputs
         return self.to_logits(inputs)
 
-    @tf.function
-    def train_step(self,inputs,targets,loss_object,training=True):
-        grads_all = []
-        vars_all = []
+
+    @tf.function 
+    def train_step(self,inputs,targets,loss_object,loss_metric,training=True):
+        loss, grads_all, vars_all = self.backward_grads_and_vars(inputs,targets,loss_object,training=True)
+        self.optimizer.apply_gradients(zip(grads_all, vars_all))
+        loss_metric(loss)
+        return loss
+
+       
+    def backward_grads_and_vars(self,inputs,targets,loss_object,training=True):
+        total_grads_all = []
+        total_vars_all = []
         def get_loss(real, pred, loss_object):
             with tf.name_scope("loss_layer"):
                 mask = tf.cast(tf.math.logical_not(tf.math.equal(real, 0)),tf.float32)
@@ -91,131 +105,27 @@ class TFReformerLM(tf.keras.Model):
                 sequence_avg_loss = loss_ / tf.reduce_sum(mask, axis=1)
                 
                 return sequence_avg_loss
-        """
-        with tf.GradientTape(persistent=True) as tape:
-            
-            tape.watch(self.to_logits.variables)
-            tape.watch(self.reformer_output)
 
-            variables_names = [v.name for v in self.reformer.model_layers.blocks[0].f.trainable_variables]
-            
-            tf.print(variables_names)
-            tf.print(self.reformer.model_layers.blocks[0].f.trainable_variables)
-            y_hat = self.call(inputs)
-            loss = tf.reduce_mean(get_loss(targets, y_hat ,loss_object))
-        """
+
         y_hat = self.call(inputs)
         loss = tf.reduce_mean(get_loss(targets, y_hat ,loss_object))
   
         dense_grad = tf.gradients(loss, self.to_logits.variables)
-        grads_all.append(dense_grad)
-        vars_all.append(self.to_logits.variables)
+        total_grads_all.extend(dense_grad)
+        total_vars_all.extend(self.to_logits.variables)
         reformer_output_grad =  tf.gradients(loss, self.reformer_output)
-        tf.print("hello")
-        tf.print(type(reformer_output_grad))
-        tf.print(type(dense_grad))
-        tf.print(tf.shape(reformer_output_grad[0]))
-
-        #start rev_net backward
-        f_ = self.reformer.model_layers.blocks[0].f
-        g_ =  self.reformer.model_layers.blocks[0].g
-        f_weights = f_.trainable_variables
-        g_weights = g_.trainable_variables
-        variables_names = [v.name for v in f_weights]
-        tf.print(variables_names)
-
-        
-        y = self.reformer_output
-        dy = reformer_output_grad[0]
-        y = tf.concat([y, y], axis = -1) #revnet
-        dy = tf.concat([dy, dy], axis = -1) #revnet
-        tf.print(y)
-        tf.print(tf.shape(y))
-        tf.print(dy)
-        tf.print(tf.shape(dy))
 
 
-        dy1, dy2 = tf.split(dy, num_or_size_splits=2, axis=-1)#split last dimension
-        del dy
-        tf.print("+++++++++++++++")
-        tf.print(tf.shape(dy1))
-        tf.print(tf.shape(dy2))
-        
-   
-        y1, y2 = tf.split(y, num_or_size_splits=2, axis=-1)  
-        del y 
+        y, dy, grads_all, vars_all = self.reformer.model_layers.backward_grads_and_vars(self.reformer_output,reformer_output_grad[0])
 
+        total_grads_all.extend(grads_all)
+        total_vars_all.extend(vars_all)
 
-        z1_stop =  tf.stop_gradient(y1)
+        grads_combined_4 = tf.gradients(
+            y, self.token_emb.trainable_variables[0],grad_ys=dy)
 
-
-
-
-        gz1 = g_(z1_stop, training=training)
-        
-        x2 = y2 - gz1
-        x2_stop = tf.stop_gradient(x2)
-
-        fx2 = f_(x2_stop, training=training)
-        x1 = y1 - fx2
-        x1_stop = tf.stop_gradient(x1)
-
-        #forward
-        z1 = x1_stop + fx2
-        y2 = x2_stop + gz1
-        y1 = z1 
-
-        grads_combined_1 = tf.gradients(
-            y2, [z1_stop] + g_weights, grad_ys=dy2)
-
-        tf.print(grads_combined_1[0])
-        tf.print(tf.shape(grads_combined_1[0])) 
-
-        dz1 = dy1 + grads_combined_1[0]
-        dg = grads_combined_1[1:]
-        dx1 = dz1
-
-        
-        
-        tf.print("flag1++++++++++++")
-        tf.print(x2_stop)
-        tf.print(y1)
-        tf.print("flag1++++++++++++")
-        #xx = tf.stop_gradient(f_weights)
-        #tf.print(f_weights)
-        grads_combined_2 = tf.gradients(
-            y1, [x2_stop] + f_weights, grad_ys=dz1)
-        tf.print(grads_combined_2)
-        #tf.print(tf.shape(grads_combined_2))
-
-        """
-        dx2 = dy2 + grads_combined_2[0]
-
-        df = grads_combined_2[1:]
-
-
-            
-
-        grads = df + dg
-        vars_ = f_weights + g_weights
-        x = tf.concat([x1, x2], axis=-1)
-        dx = tf.concat([dx1, dx2], axis=-1)
-        
-        #return x, dx, grads, vars_
-        """
-        """
-        y, dy, grads, vars_ = block.backward_grads_and_vars(
-            y, dy, training=training)
-        grads_all += grads
-        vars_all += vars_
-        """
-        #tf.print(tf.shape(dense_grad))
-        #del tape
-        #tf.print("(((((((((((((((")
-        #dy, grads_all, vars_all=self.reformer.model_layers.backward_grads_and_vars(self.reformer_output,reformer_output_grad[0])
-        #tf.print(dy.shape)
-        #tf.print(grads_all.shape)
-
-
-
-
+        total_grads_all.extend(grads_combined_4)
+        total_vars_all.extend(self.token_emb.trainable_variables)
+      
+        return loss, total_grads_all, total_vars_all
+     
