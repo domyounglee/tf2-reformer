@@ -77,6 +77,22 @@ class TFReformerLM(tf.keras.Model):
     def set_optimizer(self,optimizer):
         self.optimizer = optimizer
 
+    def create_checkpoint_manager(self, checkpoint_path, max_to_keep=5, load_model=True):
+        with tf.name_scope('checkpoint_manager'):
+            ckpt = tf.train.Checkpoint(optimizer=self.optimizer, model=self)
+            self.ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=max_to_keep)
+
+            if load_model:  # If want to load trained weights
+                ckpt.restore(self.ckpt_manager.latest_checkpoint)
+                print('Latest checkpoint restored...............')
+            else:
+                print("Initializing model from scratch..........")
+    def load_model(self, filepath):
+        ckpt = tf.train.Checkpoint(model=self)
+        ckpt_manager = tf.train.CheckpointManager(ckpt, filepath)
+        ckpt.restore(ckpt_manager.latest_checkpoint)
+        print("Model Restored..........................")
+
 
     def call(self, inputs):
         self.inputs = self.token_emb(inputs)

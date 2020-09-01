@@ -13,7 +13,8 @@ import functools
 seq_length = 3200
 batch_size = 2
 #_ROOT = os.path.abspath(os.path.dirname(__file__))
-
+LOG_DIR =  "log"
+MODEL_DIR = "ckpt"
 BPE_TSV_PATH ="bpe_spm.tsv"
 BPE_MODEL_PATH = "bpe_model"
 DATASET_PATH = "enwik8.gz"
@@ -96,7 +97,7 @@ train_loss = tf.keras.metrics.Mean(name='train_loss')
 
 model_tf.set_optimizer(tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
                                                           epsilon=1e-9))
-
+model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=False)
 print("start training")
 for (step, (inputs, targets)) in enumerate(d):
 
@@ -107,5 +108,8 @@ for (step, (inputs, targets)) in enumerate(d):
     loss = model_tf.train_step(inputs,targets,loss_object,train_loss)
     print(loss)
     
-
+    if step % 10000 == 0:
+        ckpt_save_path = model_tf.ckpt_manager.save()
+        print('Saving checkpoint for step {} at {}'.format(step,
+                                                            ckpt_save_path))
 
