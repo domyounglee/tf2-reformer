@@ -28,13 +28,21 @@ from .TFutils import cache_fn, Chunk, WithNorm
 from .blocks import ReversibleBlock, ReversibleSequence
 
 class TFReformer(tf.keras.Model):
-    def __init__(self, emb, depth, max_seq_len, heads = 8, bucket_size = 64, n_hashes = 8, ff_chunks = 100, attn_chunks = None, causal = False, weight_tie = False, lsh_dropout = 0., lsh_attend_across_buckets = False, lsh_allow_duplicate_attention = True, random_rotations_per_head = False, twin_attention = False, use_scale_norm = False, use_full_attn = False):
+    def __init__(self, emb, depth, max_seq_len, heads = 8, bucket_size = 64, 
+                        n_hashes = 8, ff_chunks = 100, attn_chunks = None, 
+                        causal = False, weight_tie = False, lsh_dropout = 0., 
+                        lsh_attend_across_buckets = False, lsh_allow_duplicate_attention = True, 
+                        random_rotations_per_head = False, twin_attention = False, 
+                        use_scale_norm = False, use_full_attn = False):
         super().__init__()
         self.emb = emb
         self.depth = depth
 
         get_full_attn = lambda: TFSelfAttention(emb, heads, causal = causal)
-        get_lsh_attn = lambda: TFLSHSelfAttention(emb, heads, bucket_size, n_hashes, causal = causal, dropout = lsh_dropout, attn_chunks = attn_chunks, allow_duplicate_attention = lsh_allow_duplicate_attention, attend_across_buckets = lsh_attend_across_buckets, random_rotations_per_head = random_rotations_per_head)
+        get_lsh_attn = lambda: TFLSHSelfAttention(emb, heads, bucket_size, n_hashes, 
+                                                    causal = causal, dropout = lsh_dropout, attn_chunks = attn_chunks, 
+                                                    allow_duplicate_attention = lsh_allow_duplicate_attention, attend_across_buckets = lsh_attend_across_buckets, 
+                                                    random_rotations_per_head = random_rotations_per_head)
 
         get_attn = get_full_attn if use_full_attn else get_lsh_attn
         get_ff = lambda: TFFeedForward(emb)
@@ -61,15 +69,21 @@ class TFReformer(tf.keras.Model):
 
     def call(self, x):
         x = tf.concat([x, x], axis = -1) #revnet
+        #tf.print(tf.equal(tf.stack(tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)),tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)))
         x = self.model_layers(x)
-        return tf.stack(tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0))
+        return tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)
 
 class TFReformerLM(tf.keras.Model):
     def __init__(self, num_tokens, emb, depth, max_seq_len, heads = 8, bucket_size = 64, n_hashes = 8, ff_chunks = 100, attn_chunks = None, causal = False, weight_tie = False, lsh_dropout = 0., random_rotations_per_head = False, twin_attention = False, use_scale_norm = False, use_full_attn = False):
         super().__init__()
         self.token_emb = Embedding(num_tokens, emb)
         self.pos_emb = Embedding(max_seq_len, emb)
-        self.reformer = TFReformer(emb, depth, max_seq_len, heads = heads,lsh_attend_across_buckets = False, bucket_size = bucket_size, n_hashes = n_hashes, ff_chunks = ff_chunks, attn_chunks = attn_chunks, causal = causal, weight_tie = weight_tie, lsh_dropout = lsh_dropout, random_rotations_per_head = random_rotations_per_head, twin_attention = twin_attention, use_scale_norm = use_scale_norm, use_full_attn = use_full_attn)
+        self.reformer = TFReformer(emb, depth, max_seq_len, heads = heads,lsh_attend_across_buckets = False, 
+                                    bucket_size = bucket_size, n_hashes = n_hashes, ff_chunks = ff_chunks, 
+                                    attn_chunks = attn_chunks, causal = causal, weight_tie = weight_tie, 
+                                    lsh_dropout = lsh_dropout, random_rotations_per_head = random_rotations_per_head, 
+                                    twin_attention = twin_attention, use_scale_norm = use_scale_norm, 
+                                    use_full_attn = use_full_attn)
         self.to_logits = Dense(num_tokens)
         self.reformer_output=None
         self.optimizer = None
@@ -97,16 +111,36 @@ class TFReformerLM(tf.keras.Model):
     def call(self, inputs):
         self.inputs = self.token_emb(inputs)
         inputs = self.inputs + self.pos_emb(tf.range(inputs.shape[1]))
-        inputs = self.reformer(inputs)
-        self.reformer_output = inputs
-        return self.to_logits(inputs)
+        self.reformer_output = self.reformer(inputs)
+     
+        return self.to_logits(self.reformer_output)
 
 
     @tf.function 
-    def train_step(self,inputs,targets,loss_object,loss_metric,training=True):
-        loss, grads_all, vars_all = self.backward_grads_and_vars(inputs,targets,loss_object,training=True)
-        self.optimizer.apply_gradients(zip(grads_all, vars_all))
-        loss_metric(loss)
+    def train_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=True,GPU = False ):
+        if GPU :
+
+            def step_fn(inputs,targets,loss_object,loss_metric,training=True):
+
+                loss, grads_all, vars_all, cross_entropy = self.backward_grads_and_vars(inputs,targets,loss_object,training=training)
+
+                self.optimizer.apply_gradients(zip(grads_all, vars_all))
+                loss_metric(loss)   
+
+                return cross_entropy
+
+
+            per_example_losses = mirrored_strategy.experimental_run_v2(
+                step_fn, args=(inputs,targets,loss_object,loss_metric,True,))
+
+            loss = mirrored_strategy.reduce(
+                tf.distribute.ReduceOp.MEAN, per_example_losses, axis=0) 
+            
+        else:             
+            loss, grads_all, vars_all, _ = self.backward_grads_and_vars(inputs,targets,loss_object,training=True)
+
+            self.optimizer.apply_gradients(zip(grads_all, vars_all))
+            loss_metric(loss)
         return loss
 
        
@@ -116,21 +150,22 @@ class TFReformerLM(tf.keras.Model):
         def get_loss(real, pred, loss_object):
             with tf.name_scope("loss_layer"):
                 mask = tf.cast(tf.math.logical_not(tf.math.equal(real, 0)),tf.float32)
-                loss_ = loss_object(real, pred)
+                loss_ = loss_object(real, pred) #loss : (batch , seq_len), real: (batch , seq_len), pred: (batch , seq_len, voc)
+                loss_ = loss_ * mask 
                 loss_ = tf.reduce_sum(loss_, axis=1)
-                sequence_avg_loss = loss_ / tf.reduce_sum(mask, axis=1)
+                sequence_avg_loss = loss_ / tf.reduce_sum(mask, axis=1) #batch 
                 
                 return sequence_avg_loss
 
 
         y_hat = self.call(inputs)
-        loss = tf.reduce_mean(get_loss(targets, y_hat ,loss_object))
+        cross_entropy = get_loss(targets, y_hat ,loss_object)
+        loss = tf.reduce_mean(cross_entropy)
   
-        dense_grad = tf.gradients(loss, self.to_logits.variables)
+        dense_grad = tf.gradients(loss, self.to_logits.variables) #gradients of w,b
         total_grads_all.extend(dense_grad)
         total_vars_all.extend(self.to_logits.variables)
         reformer_output_grad =  tf.gradients(loss, self.reformer_output)
-
 
         y, dy, grads_all, vars_all = self.reformer.model_layers.backward_grads_and_vars(self.reformer_output,reformer_output_grad[0])
 
@@ -140,8 +175,9 @@ class TFReformerLM(tf.keras.Model):
         grads_combined_4 = tf.gradients(
             y, self.token_emb.trainable_variables[0],grad_ys=dy)
 
+
         total_grads_all.extend(grads_combined_4)
         total_vars_all.extend(self.token_emb.trainable_variables)
       
-        return loss, total_grads_all, total_vars_all
+        return loss, total_grads_all, total_vars_all, cross_entropy
      

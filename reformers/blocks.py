@@ -72,8 +72,8 @@ class ReversibleSequence(tf.keras.Model):
             grads_all += grads
             vars_all += vars_
 
-        y = tf.stack(tf.reduce_sum(tf.split(y, 2, axis=-1), axis=0))
-        dy = tf.stack(tf.reduce_sum(tf.split(dy, 2, axis=-1), axis=0))
+        y = tf.reduce_sum(tf.split(y, 2, axis=-1), axis=0)
+        dy = tf.reduce_sum(tf.split(dy, 2, axis=-1), axis=0)
 
         return y,dy, grads_all, vars_all
 
