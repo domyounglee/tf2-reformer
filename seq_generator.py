@@ -8,6 +8,8 @@ from absl import logging
 from reformers.TFreformers import TFReformerLM
 from SequenceGenerator import SequenceGenerator
 
+tf.config.experimental.set_visible_devices([], 'GPU')
+
 
 _ROOT = os.path.abspath(os.path.dirname(__file__))
 LOG_DIR = _ROOT + "/log"
@@ -20,11 +22,14 @@ FLAGS = flags.FLAGS
 
 #settings 
 seq_length = 3200
-batch_size = 2
+batch_size = 8
 #_ROOT = os.path.abspath(os.path.dirname(__file__))
 
-BPE_TSV_PATH ="bpe_spm.tsv"
-BPE_MODEL_PATH = "bpe_model"
+BPE_TSV_PATH ="bpe_model.model"
+
+BPE_MODEL_PATH = "bpe_model.model"
+
+
 DATASET_PATH = "enwik8.gz"
 BOS_ID = 3
 EOS_ID = 4
@@ -49,7 +54,7 @@ flags.DEFINE_integer("vocab_size", 20000,"vocab_size")
 flags.DEFINE_integer("embedding_size", 128,"Embedding size")
 flags.DEFINE_integer("top_k", 3,"Embedding size")
 flags.DEFINE_float("top_p", 0.9,"Embedding size")
-flags.DEFINE_integer("seq_len", 100,"Embedding size")
+flags.DEFINE_integer("seq_len", 3200,"Embedding size")
 flags.DEFINE_bool("nucleus_sampling", False, "s")
 
 flags.DEFINE_string("optimizer", "adam","optimizer type")
@@ -62,14 +67,14 @@ flags.DEFINE_string("mode", "gpt2","Language models (choose one btw gpt2 or refo
 def main(argv):
 
     context = "Hello my name is Domyoung Nice to meet you "
-    sg = SequenceGenerator(MODEL_DIR, BPE_TSV_PATH,FLAGS)
+    sg = SequenceGenerator(MODEL_DIR, BPE_MODEL_PATH,FLAGS)
     sg.load_weights()
     generated_seq = sg.sample_sequence(context,
 									   seq_len=FLAGS.seq_len,
 									   temperature=1.0,
 									   top_k=8,
 									   top_p=0.9,
-									   nucleus_sampling=False)
+									   nucleus_sampling=True)
     print("Generated seq by model:- " + generated_seq)
 
 

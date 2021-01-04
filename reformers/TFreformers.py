@@ -67,10 +67,10 @@ class TFReformer(tf.keras.Model):
 
         self.model_layers = ReversibleSequence(blocks)
 
-    def call(self, x):
+    def call(self, x,training=True):
         x = tf.concat([x, x], axis = -1) #revnet
         #tf.print(tf.equal(tf.stack(tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)),tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)))
-        x = self.model_layers(x)
+        x = self.model_layers(x,training=training)
         return tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)
 
 class TFReformerLM(tf.keras.Model):
@@ -108,10 +108,11 @@ class TFReformerLM(tf.keras.Model):
         print("Model Restored..........................")
 
 
-    def call(self, inputs):
+    def call(self, inputs,training=True):
+
         self.inputs = self.token_emb(inputs)
         inputs = self.inputs + self.pos_emb(tf.range(inputs.shape[1]))
-        self.reformer_output = self.reformer(inputs)
+        self.reformer_output = self.reformer(inputs,training=True)
      
         return self.to_logits(self.reformer_output)
 

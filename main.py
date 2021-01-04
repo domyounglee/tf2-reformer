@@ -7,6 +7,7 @@ import csv
 import sentencepiece as spm
 import os 
 import functools
+import sys 
 
 mirrored_strategy = tf.distribute.MirroredStrategy()
 #settings 
@@ -22,8 +23,8 @@ BOS_ID = 3
 EOS_ID = 4
 trsh = 5
 vocab_size = 20000
-learning_rate=5e-5
-epoch = 50
+learning_rate=1e-5
+epoch = 200
 GPU= True
 
         
@@ -36,7 +37,7 @@ class TextSamplerDataset():
     def __getitem__(self, index):
         rand_start = np.random.randint(0,len(self.data) - self.seq_len - 1, (1,))[0]
         
-        full_seq = self.data[rand_start: rand_start + self.seq_len + 1]
+        full_seq = self.data[rand_start: rand_start + self.seq_len -1]
         return full_seq
 
     def __len__(self):
@@ -54,15 +55,18 @@ s.Load(BPE_MODEL_PATH + ".model")
 print("finish setting datset")
 def generator_fn(dataset,tokenizer, bs,seq_len ):
     for i in range(len(dataset)):
+        
         line = ' '.join(dataset[i])
         encoded_id = tokenizer.encode_as_ids(line)
         #just in case
         if len(encoded_id) < seq_len-1:
-            encoded_id = encoded_id + [0]*((seq_len)-len(encoded_id))
+            encoded_id = encoded_id + [0]*((seq_len)-len(encoded_id)-1)
         if len(encoded_id) > seq_len-1:
-            encoded_id = encoded_id[:seq_len]
-        inputs = np.array([BOS_ID] + encoded_id[:-1])
-        targets = np.array( encoded_id)
+            encoded_id = encoded_id[:seq_len-1]
+
+
+        inputs = np.array([BOS_ID] + encoded_id)
+        targets = np.array( encoded_id + [EOS_ID])
         yield inputs,targets
         
  
@@ -154,11 +158,12 @@ if GPU:
                 #print(y)
                 loss = model_tf.train_step(inputs,targets,loss_object,train_loss,mirrored_strategy,GPU=True)
                 print(loss)
-                
+                #sys.exit()
                 if step % 10000 == 0:
                     ckpt_save_path = model_tf.ckpt_manager.save()
                     print('Saving checkpoint for step {} at {}'.format(step,
                                                                         ckpt_save_path))
+                
 
 else:
     for e in range(1,epoch+1):

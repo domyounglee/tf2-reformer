@@ -250,6 +250,8 @@ class TFLSHSelfAttention(tf.keras.Model):
 
     def call(self, inputs):
         b, t, e, h = *inputs.shape, self.heads
+        tf.print("+"*100)
+        tf.print(t)
         assert t % self.bucket_size == 0, f'Sequence length needs to be divisible by target bucket size - {self.bucket_size}'
 
         qk = self.toqk(inputs)
