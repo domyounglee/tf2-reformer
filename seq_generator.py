@@ -66,7 +66,7 @@ flags.DEFINE_string("mode", "gpt2","Language models (choose one btw gpt2 or refo
 
 def main(argv):
 
-    context = "Hello my name is Domyoung Nice to meet you "
+    context = "nice to meet you. what kind of food do you like?"
     sg = SequenceGenerator(MODEL_DIR, BPE_MODEL_PATH,FLAGS)
     sg.load_weights()
     generated_seq = sg.sample_sequence(context,

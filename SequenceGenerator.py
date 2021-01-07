@@ -85,7 +85,7 @@ class SequenceGenerator:
                 ff_chunks = 16,      # number of chunks for feedforward layer, make higher if there are memory issues
                 weight_tie = False,   # tie parameters of each layer for no memory per additional depth
                 attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
-                use_full_attn = False )  # use full self attention, for comparison
+                use_full_attn = True )  # use full self attention, for comparison
             
         ckpt = tf.train.Checkpoint(model=self.model)
 
@@ -99,7 +99,7 @@ class SequenceGenerator:
 
     def sample_sequence(self,
                         context=None,
-                        seq_len=512,
+                        seq_len=256,
                         bos=3,
                         eos=4,
                         temperature=1,
@@ -147,11 +147,16 @@ class SequenceGenerator:
             # print(tf.shape(output))
             # print(tf.shape(samples))
             output = tf.concat([output, samples], axis=-1)
-            print("end")
+            
             print(output.shape)
             #prev = output
             # print(tf.shape(output))
             # print(output)
+            result = tf.squeeze(output, axis=0)
+            pred = [int(i) for i in result]
+            generated_seq = self.sp.decode_ids(pred[1:])
+            print(generated_seq)
+            print("end")
 
         # print("--------------------------")
         result = tf.squeeze(output, axis=0)

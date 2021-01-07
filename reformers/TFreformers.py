@@ -160,6 +160,7 @@ class TFReformerLM(tf.keras.Model):
 
 
         y_hat = self.call(inputs)
+        #tf.print(y_hat[0][0])
         cross_entropy = get_loss(targets, y_hat ,loss_object)
         loss = tf.reduce_mean(cross_entropy)
   
