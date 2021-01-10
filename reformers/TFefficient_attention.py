@@ -87,13 +87,11 @@ class TFLSHAttention(tf.keras.Model):
         offsets = tf.cast(offsets, tf.int64)
         buckets = tf.reshape(buckets + offsets, (batch_size, -1,)) # batch size 남기고 collapse
 
-
         return buckets#(batch, self.seqlen*n_hashes)
 
     def call(self, qk, v):
         
         batch_size, seqlen, _ = qk.shape
-        
         device = qk.device
 
         n_buckets = seqlen // self.bucket_size #몇개의 bucket으로 나눌것인가 
@@ -133,7 +131,7 @@ class TFLSHAttention(tf.keras.Model):
         bqk = tf.reshape(sqk, (batch_size, self.n_hashes * n_bins, -1, sqk.shape[-1]))#batch, n_bins*n_hashes,bucket_size,emb_dim
         bv = tf.reshape(sv, (batch_size, self.n_hashes * n_bins, -1, sv.shape[-1]))
         bq_buckets = bkv_buckets = tf.reshape(sbuckets_and_t // seqlen, (batch_size, self.n_hashes * n_bins, -1))#batch, n_bins*n_hashes, bucket size #n_hashs offset 한건 살아있음 
-  
+        
         # Hashing operates on unit-length vectors. Unnormalized query vectors are
         # fine because they effectively provide a learnable temperature for the
         # attention softmax, but normalizing keys is needed so that similarity for
@@ -166,13 +164,13 @@ class TFLSHAttention(tf.keras.Model):
    
             mask = bq_t[:, :, :, None] < bkv_t[:, :, None, :] #index 관한 마스크 >t 인것들 마스킹 
             #tf.print(mask)
-            dots = tf.math.multiply(dots, (1-tf.cast(mask, tf.float32))) + (tf.cast(mask, tf.float32)) * (tf.float32.min)
+            dots = tf.math.multiply(dots, (1-tf.cast(mask, tf.float32))) + (tf.cast(mask, tf.float32)) * (-5e4 )
             del mask
     
         # Mask out attention to self except when no other targets are available.
         self_mask = bq_t[:, :, :, None] == bkv_t[:, :, None, :] # 자기자신인것 index마스킹 
         #tf.print(self_mask)
-        dots = tf.math.multiply(dots, (1-tf.cast(self_mask, tf.float32))) + (tf.cast(self_mask, tf.float32)) * (tf.float32.min)
+        dots = tf.math.multiply(dots, (1-tf.cast(self_mask, tf.float32))) + (tf.cast(self_mask, tf.float32)) * (-5e4 )
         del self_mask
         # Mask out attention to other hash buckets.
 
@@ -181,7 +179,7 @@ class TFLSHAttention(tf.keras.Model):
             bucket_mask = bq_buckets[:, :, :, None] != bkv_buckets[:, :, None, :] #내용중 자기 랑 다른 Hash인것들 2*chunk size 단위로 마스킹 
             #tf.print(bucket_mask)
           
-            dots = tf.math.multiply(dots, (1-tf.cast(bucket_mask, tf.float32))) + (tf.cast(bucket_mask, tf.float32)) * (tf.float32.min)
+            dots = tf.math.multiply(dots, (1-tf.cast(bucket_mask, tf.float32))) + (tf.cast(bucket_mask, tf.float32)) * (-5e4 )
             
             #tf.print(dots)
             #tf.print(bucket_mask)
@@ -260,7 +258,7 @@ class TFLSHSelfAttention(tf.keras.Model):
             return tf.reshape(tf.transpose(tf.reshape(v, (b, t, h, -1)), perm=[0, 2, 1, 3]), (b * h, t, -1)) 
 
         def split_heads(v):
-            return tf.transpose(tf.reshape(v, (b, t, h, -1)), perm=[0, 2, 1, 3])
+            return tf.transpose(tf.reshape(v, (b, h, t, -1)), perm=[0, 2, 1, 3])
 
         qk = merge_heads(qk)
         v = merge_heads(v)

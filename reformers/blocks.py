@@ -56,7 +56,7 @@ class ReversibleSequence(tf.keras.Model):
 
     def backward_grads_and_vars(self, y, dy, training=True):
         """Apply reversible block backward to outputs."""
-
+        
         grads_all = []
         vars_all = []
         #tf.print(y.shape)
@@ -103,12 +103,13 @@ class ReversibleBlock(tf.keras.Model):
 
     def call(self, x, training=True, concat=True):
         """Apply residual block to inputs."""
-
         x1, x2 = tf.split(x, num_or_size_splits=2, axis=self.axis)
         f_x2 = self.f(x2, training=training)
         y1 = f_x2 + x1
+        tf.stop_gradient(y1)
         g_y1 = self.g(y1, training=training)
         y2 = g_y1 + x2
+        tf.stop_gradient(y2)
         if not concat:  # For correct backward grads
             return y1, y2
 
@@ -119,23 +120,21 @@ class ReversibleBlock(tf.keras.Model):
         #Manually compute backward gradients given input and output grads.
         dy1, dy2 = tf.split(dy, num_or_size_splits=2, axis=self.axis)#split last dimension
    
-        
+        del dy
         y1, y2 = tf.split(y, num_or_size_splits=2, axis=self.axis)  
 
-
+        del y
         #start rev_net backward
         f_ = self.f
         g_ =  self.g
         f_weights = f_.trainable_variables
         g_weights = g_.trainable_variables
- 
-        
 
-
-        z1_stop =  tf.stop_gradient(y1)
-        gz1 = g_(z1_stop, training=training)
         
+        gy1 = g_(y1, training=training)
+        tf.gra
         x2 = y2 - gz1
+        del y2, gy1
         x2_stop = tf.stop_gradient(x2)
 
         fx2 = f_(x2_stop, training=training)

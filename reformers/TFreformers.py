@@ -68,6 +68,7 @@ class TFReformer(tf.keras.Model):
         self.model_layers = ReversibleSequence(blocks)
 
     def call(self, x,training=True):
+        
         x = tf.concat([x, x], axis = -1) #revnet
         #tf.print(tf.equal(tf.stack(tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)),tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)))
         x = self.model_layers(x,training=training)
@@ -109,7 +110,6 @@ class TFReformerLM(tf.keras.Model):
 
 
     def call(self, inputs,training=True):
-
         self.inputs = self.token_emb(inputs)
         inputs = self.inputs + self.pos_emb(tf.range(inputs.shape[1]))
         self.reformer_output = self.reformer(inputs,training=True)
@@ -118,8 +118,8 @@ class TFReformerLM(tf.keras.Model):
 
 
     @tf.function 
-    def train_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=True,GPU = False ):
-        if GPU :
+    def train_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=True,distributed = False ):
+        if distributed :
 
             def step_fn(inputs,targets,loss_object,loss_metric,training=True):
 
@@ -144,7 +144,32 @@ class TFReformerLM(tf.keras.Model):
             loss_metric(loss)
         return loss
 
-       
+    @tf.function 
+    def eval_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=False,distributed = False ):
+        if distributed :
+
+            def step_fn(inputs,targets,loss_object,loss_metric,training=True):
+
+                loss, grads_all, vars_all, cross_entropy = self.backward_grads_and_vars(inputs,targets,loss_object,training=training)
+
+                loss_metric(loss)   
+
+                return cross_entropy
+
+
+            per_example_losses = mirrored_strategy.experimental_run_v2(
+                step_fn, args=(inputs,targets,loss_object,loss_metric,True,))
+
+            loss = mirrored_strategy.reduce(
+                tf.distribute.ReduceOp.MEAN, per_example_losses, axis=0) 
+            
+        else:             
+            loss, grads_all, vars_all, _ = self.backward_grads_and_vars(inputs,targets,loss_object,training=training)
+
+            self.optimizer.apply_gradients(zip(grads_all, vars_all))
+            loss_metric(loss)
+        return loss   
+
     def backward_grads_and_vars(self,inputs,targets,loss_object,training=True):
         total_grads_all = []
         total_vars_all = []
@@ -157,7 +182,6 @@ class TFReformerLM(tf.keras.Model):
                 sequence_avg_loss = loss_ / tf.reduce_sum(mask, axis=1) #batch 
                 
                 return sequence_avg_loss
-
 
         y_hat = self.call(inputs)
         #tf.print(y_hat[0][0])
