@@ -48,7 +48,7 @@ class TFReformer(tf.keras.Model):
         get_ff = lambda: TFFeedForward(emb)
 
         if weight_tie:
-            get_attn = cache_fn(get_attn)
+            get_attn = cache_fn(get_attn) 
             get_ff = cache_fn(get_ff)
 
         blocks = []
@@ -85,6 +85,7 @@ class TFReformerLM(tf.keras.Model):
                                     lsh_dropout = lsh_dropout, random_rotations_per_head = random_rotations_per_head, 
                                     twin_attention = twin_attention, use_scale_norm = use_scale_norm, 
                                     use_full_attn = use_full_attn)
+        self.lastlayernorm = LayerNormalization()
         self.to_logits = Dense(num_tokens)
         self.reformer_output=None
         self.optimizer = None
@@ -109,15 +110,24 @@ class TFReformerLM(tf.keras.Model):
         print("Model Restored..........................")
 
 
+    def before_reformer(self, inputs):
+        inputs = self.token_emb(inputs)+ self.pos_emb(tf.range(inputs.shape[1]))
+        return inputs
+
+    def after_reformer(self, inputs):
+        reformer_outputs = self.lastlayernorm(inputs)
+        logits = self.to_logits(reformer_outputs)
+        return logits
+
+
     def call(self, inputs,training=True):
-        self.inputs = self.token_emb(inputs)
-        inputs = self.inputs + self.pos_emb(tf.range(inputs.shape[1]))
-        self.reformer_output = self.reformer(inputs,training=True)
-     
-        return self.to_logits(self.reformer_output)
+        embedded_inputs = self.before_reformer(inputs)
+        reformer_output = self.reformer(embedded_inputs,training=training)
+        logits = self.after_reformer(reformer_output)
+        return logits
 
 
-    @tf.function 
+ 
     def train_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=True,distributed = False ):
         if distributed :
 
@@ -138,10 +148,11 @@ class TFReformerLM(tf.keras.Model):
                 tf.distribute.ReduceOp.MEAN, per_example_losses, axis=0) 
             
         else:             
-            loss, grads_all, vars_all, _ = self.backward_grads_and_vars(inputs,targets,loss_object,training=True)
+            loss, grads_all, vars_all, _ = self.backward_grads_and_vars(inputs,targets,loss_object,training=training)
 
             self.optimizer.apply_gradients(zip(grads_all, vars_all))
             loss_metric(loss)
+
         return loss
 
     @tf.function 
@@ -166,7 +177,6 @@ class TFReformerLM(tf.keras.Model):
         else:             
             loss, grads_all, vars_all, _ = self.backward_grads_and_vars(inputs,targets,loss_object,training=training)
 
-            self.optimizer.apply_gradients(zip(grads_all, vars_all))
             loss_metric(loss)
         return loss   
 
@@ -183,27 +193,60 @@ class TFReformerLM(tf.keras.Model):
                 
                 return sequence_avg_loss
 
-        y_hat = self.call(inputs)
-        #tf.print(y_hat[0][0])
-        cross_entropy = get_loss(targets, y_hat ,loss_object)
-        loss = tf.reduce_mean(cross_entropy)
-  
-        dense_grad = tf.gradients(loss, self.to_logits.variables) #gradients of w,b
-        total_grads_all.extend(dense_grad)
-        total_vars_all.extend(self.to_logits.variables)
-        reformer_output_grad =  tf.gradients(loss, self.reformer_output)
+        with tf.GradientTape() as tape_0:
 
-        y, dy, grads_all, vars_all = self.reformer.model_layers.backward_grads_and_vars(self.reformer_output,reformer_output_grad[0])
+            embedded_inputs = self.before_reformer(inputs)
+
+
+        reformer_outputs = self.reformer(embedded_inputs,training=training)
+
+
+        #for gradient of logits
+        with tf.GradientTape() as tape_1:
+            tape_1.watch(reformer_outputs)
+            logits = self.after_reformer(reformer_outputs)
+        
+
+        #tf.print(y_hat[0][0])
+            cross_entropy = get_loss(targets, logits ,loss_object)
+            loss = tf.reduce_mean(cross_entropy)
+        
+
+        #tf.print(self.to_logits.trainable_variables)
+        #tf.print(tape_1.watched_variables())
+        #update output layer
+        dense_variable_list = list(tape_1.watched_variables())
+        dense_grad_result = tape_1.gradient(loss, dense_variable_list + [reformer_outputs])
+        dense_grad, reformer_outputs_grad = dense_grad_result[:-1], dense_grad_result[-1]
+
+
+
+        total_grads_all.extend(dense_grad)
+        total_vars_all.extend(tape_1.watched_variables())
+
+
+
+        
+        y, dy, grads_all, vars_all = self.reformer.model_layers.backward_grads_and_vars(reformer_outputs,reformer_outputs_grad)
 
         total_grads_all.extend(grads_all)
         total_vars_all.extend(vars_all)
 
-        grads_combined_4 = tf.gradients(
-            y, self.token_emb.trainable_variables[0],grad_ys=dy)
+
+        del tape_1
+
+        #update word embeddings
+        word_embedding_variable_list = list(tape_0.watched_variables())
+        we_grad_result = tape_0.gradient(embedded_inputs, word_embedding_variable_list,dy )
+        #tf.print(tf.reduce_sum(we_grad_result))
+
+        del tape_0
 
 
-        total_grads_all.extend(grads_combined_4)
-        total_vars_all.extend(self.token_emb.trainable_variables)
-      
+        total_grads_all.extend(we_grad_result)
+        total_vars_all.extend(word_embedding_variable_list)
+        total_grads_all = [tf.clip_by_norm(g, 0.5)
+             for g in total_grads_all]
+
         return loss, total_grads_all, total_vars_all, cross_entropy
      

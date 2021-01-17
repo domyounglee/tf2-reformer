@@ -66,7 +66,7 @@ class ReversibleSequence(tf.keras.Model):
         for i in reversed(range(len(self.blocks))):
 
             block = self.blocks[i]
-   
+
             y, dy, grads, vars_ = block.backward_grads_and_vars(
                 y, dy, training=training)
             grads_all += grads
@@ -106,10 +106,8 @@ class ReversibleBlock(tf.keras.Model):
         x1, x2 = tf.split(x, num_or_size_splits=2, axis=self.axis)
         f_x2 = self.f(x2, training=training)
         y1 = f_x2 + x1
-        tf.stop_gradient(y1)
         g_y1 = self.g(y1, training=training)
         y2 = g_y1 + x2
-        tf.stop_gradient(y2)
         if not concat:  # For correct backward grads
             return y1, y2
 
@@ -117,6 +115,7 @@ class ReversibleBlock(tf.keras.Model):
 
 
     def backward_grads_and_vars(self, y, dy, training=True):
+
         #Manually compute backward gradients given input and output grads.
         dy1, dy2 = tf.split(dy, num_or_size_splits=2, axis=self.axis)#split last dimension
    
@@ -129,48 +128,46 @@ class ReversibleBlock(tf.keras.Model):
         g_ =  self.g
         f_weights = f_.trainable_variables
         g_weights = g_.trainable_variables
+ 
+        z1= y1 
+
+        with tf.GradientTape() as tape_2:
+            
+            tape_2.watch(z1)
+           
+            gz1 = g_(z1)
+        
+       
+        grad_result = tape_2.gradient(gz1,g_weights+[z1],dy2)
+
+        del tape_2
+
+        dg_weights, dz1 = grad_result[:-1], grad_result[-1]
 
         
-        gy1 = g_(y1, training=training)
-        tf.gra
         x2 = y2 - gz1
-        del y2, gy1
-        x2_stop = tf.stop_gradient(x2)
+        del y2, gz1
 
-        fx2 = f_(x2_stop, training=training)
+        dx1 = dy1 + dz1
+        del dy1, dz1
+
+        with tf.GradientTape() as tape_3:
+            tape_3.watch(x2)
+            fx2 = f_(x2)
+    
+        grad_result = tape_3.gradient(fx2, f_weights+[x2],dx1)
+        df_weights, dx2 = grad_result[:-1], grad_result[-1]
+       
         x1 = y1 - fx2
-        x1_stop = tf.stop_gradient(x1)
+        del y1, fx2
 
-        #forward to get the gradient 
-        z1 = x1_stop + fx2
-        y2 = x2_stop + gz1
-        y1 = z1 
+        dx2 = dx2 + dy2
 
-        grads_combined_1 = tf.gradients(
-            y2, [z1_stop] + g_weights, grad_ys=dy2)
-
-        #tf.print(grads_combined_1[0])
-        #tf.print(tf.shape(grads_combined_1[0])) 
-
-        dz1 = dy1 + grads_combined_1[0]
-        dg = grads_combined_1[1:]
-        dx1 = dz1
-
-   
-        grads_combined_2 = tf.gradients(
-            y1, [x2_stop] + f_weights, grad_ys=dz1)
-
-        dx2 = dy2 + grads_combined_2[0]
-        df = grads_combined_2[1:]
-        
-        #tf.print(dx2)
-        #tf.print(df)
-
-        grads = df + dg
+        grads_ = df_weights + dg_weights
         vars_ = f_weights+ g_weights
 
         x = tf.concat([x1, x2], axis=self.axis)
         dx = tf.concat([dx1, dx2], axis=self.axis)
         
-        return x, dx, grads, vars_
+        return x, dx, grads_, vars_
 

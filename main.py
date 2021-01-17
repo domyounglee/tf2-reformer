@@ -36,7 +36,7 @@ BPE_MODEL_PATH = "bpe_model"
 DATASET_PATH = "enwik8.gz"
 
 trsh = 5
-learning_rate=1e-4
+learning_rate=5e-6
 epoch = int(1e5)
 VALIDATE_EVERY  = 100
 GENERATE_EVERY  = 1000
@@ -45,10 +45,10 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("batch_size", 4,"batch_size")
 flags.DEFINE_integer("vocab_size", 256,"vocab_size")
-flags.DEFINE_integer("embedding_size", 128,"Embedding size")
+flags.DEFINE_integer("embedding_size", 64,"Embedding size")
 flags.DEFINE_integer("top_k", 3,"Embedding size")
 flags.DEFINE_float("top_p", 0.9,"Embedding size")
-flags.DEFINE_integer("seq_len", 4096,"Embedding size")
+flags.DEFINE_integer("seq_len", 3072,"Embedding size")
 flags.DEFINE_bool("nucleus_sampling", False, "s")
 
 flags.DEFINE_string("optimizer", "adam","optimizer type")
@@ -149,7 +149,7 @@ def main(argv):
                 causal = True,        # auto-regressive or not
                 bucket_size = 64,     # average size of qk per bucket, 64 was recommended in paper
                 n_hashes = 4,         # 4 is permissible per author, 8 is the best but slower
-                ff_chunks = 10,      # number of chunks for feedforward layer, make higher if there are memory issues
+                ff_chunks = 8,      # number of chunks for feedforward layer, make higher if there are memory issues
                 weight_tie = True,   # tie parameters of each layer for no memory per additional depth
                 attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
                 use_full_attn = False   # use full self attention, for comparison
@@ -166,6 +166,8 @@ def main(argv):
                                                                     epsilon=1e-8))
             model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=False)
 
+
+
     else:
         model_tf = TFReformerLM(
             num_tokens= FLAGS.vocab_size,
@@ -177,10 +179,10 @@ def main(argv):
             causal = True,        # auto-regressive or not
             bucket_size = 64,     # average size of qk per bucket, 64 was recommended in paper
             n_hashes = 4,         # 4 is permissible per author, 8 is the best but slower
-            ff_chunks = 2,      # number of chunks for feedforward layer, make higher if there are memory issues
+            ff_chunks = 16,      # number of chunks for feedforward layer, make higher if there are memory issues
             weight_tie = True,   # tie parameters of each layer for no memory per additional depth
             attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
-            use_full_attn = False   # use full self attention, for comparison
+            use_full_attn = True   # use full self attention, for comparison
         
         )
 

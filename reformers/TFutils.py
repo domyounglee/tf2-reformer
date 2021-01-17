@@ -110,7 +110,7 @@ class WithNorm(layers.Layer):
             return self.fn(inputs)
 
 class Chunk(layers.Layer):
-    def __init__(self, chunks, fn, along_axis = -1):
+    def __init__(self, chunks, fn, along_axis = -2):
         super(Chunk, self).__init__()
         self.axis = along_axis
         self.chunks = chunks
