@@ -94,28 +94,28 @@ class SequenceGenerator:
                         temperature=1,
                         top_k=8,
                         top_p=0.9,
-                        nucleus_sampling=True):
+                        nucleus_sampling=True
+                        ):
 
         if context == None:
             print("Give some context to model.................")
             return
         # if just string       context = tf.convert_to_tensor([ord(c) for c in context],dtype=tf.uint8)
         context = tf.expand_dims(context,0)
-        #print(context)
-       
+
         t = context.shape[1]
         
-        
+        #tf.print("*"*100)
         output = context
-        max_window = 3200
+        #tf.print(output)
+        max_window = self.flags.seq_len
         for i in range(predict_len):
             #tf.print("start")
-            #print(output)
             padded_output = pad_to_multiple(output, output.shape[1] ,64)
-            #tf.print(padded_output.shape)
             #tf.print(padded_output[:,-max_window:])
 
             logits= self.model(padded_output[:,-max_window:], training=False,)
+            #logits= self.model(output, training=False,)
 
             pred_i = t+i+1
             logits = logits[:,:pred_i]

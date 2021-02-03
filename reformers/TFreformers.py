@@ -69,10 +69,10 @@ class TFReformer(tf.keras.Model):
 
     def call(self, x,training=True):
         
-        x = tf.concat([x, x], axis = -1) #revnet
+        
         #tf.print(tf.equal(tf.stack(tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)),tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)))
         x = self.model_layers(x,training=training)
-        return tf.reduce_sum(tf.split(x, 2, axis=-1), axis=0)
+        return x
 
 class TFReformerLM(tf.keras.Model):
     def __init__(self, num_tokens, emb, depth, max_seq_len, heads = 8, bucket_size = 64, n_hashes = 8, ff_chunks = 100, attn_chunks = None, causal = False, weight_tie = False, lsh_dropout = 0., random_rotations_per_head = False, twin_attention = False, use_scale_norm = False, use_full_attn = False):
@@ -105,16 +105,20 @@ class TFReformerLM(tf.keras.Model):
                 print("Initializing model from scratch..........")
     def load_model(self, filepath):
         ckpt = tf.train.Checkpoint(model=self)
-        ckpt_manager = tf.train.CheckpointManager(ckpt, filepath)
+        ckpt_manager = tf.train.CheckpointManager(ckpt, filepath,max_to_keep=1)
         ckpt.restore(ckpt_manager.latest_checkpoint)
         print("Model Restored..........................")
 
 
     def before_reformer(self, inputs):
+        
         inputs = self.token_emb(inputs)+ self.pos_emb(tf.range(inputs.shape[1]))
+        inputs = tf.concat([inputs, inputs], axis = -1) #revnet
         return inputs
 
     def after_reformer(self, inputs):
+        
+        inputs = tf.reduce_sum(tf.split(inputs, 2, axis=-1), axis=0) #merge the split input at here 
         reformer_outputs = self.lastlayernorm(inputs)
         logits = self.to_logits(reformer_outputs)
         return logits
@@ -122,6 +126,8 @@ class TFReformerLM(tf.keras.Model):
 
     def call(self, inputs,training=True):
         embedded_inputs = self.before_reformer(inputs)
+        #tf.print(embedded_inputs)
+
         reformer_output = self.reformer(embedded_inputs,training=training)
         logits = self.after_reformer(reformer_output)
         return logits
@@ -194,15 +200,17 @@ class TFReformerLM(tf.keras.Model):
                 return sequence_avg_loss
 
         with tf.GradientTape() as tape_0:
-
+            inputs = tf.identity(inputs)
             embedded_inputs = self.before_reformer(inputs)
 
 
         reformer_outputs = self.reformer(embedded_inputs,training=training)
+        #tf.print(reformer_outputs.shape)
 
 
         #for gradient of logits
         with tf.GradientTape() as tape_1:
+            reformer_outputs = tf.identity(reformer_outputs)
             tape_1.watch(reformer_outputs)
             logits = self.after_reformer(reformer_outputs)
         

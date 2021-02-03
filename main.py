@@ -14,7 +14,7 @@ from absl import flags
 from absl import logging
 import random
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 physical_devices = tf.config.list_physical_devices('GPU')
 try:
@@ -28,16 +28,13 @@ NUM_BATCHES = int(1e5)
 
 #settings 
 
-#_ROOT = os.path.abspath(os.path.dirname(__file__))
+_ROOT = os.path.abspath(os.path.dirname(__file__))
 LOG_DIR =  "log"
-MODEL_DIR = "ckpt"
+MODEL_DIR = _ROOT+"/ckpt"
 BPE_TSV_PATH ="bpe_spm.tsv"
 BPE_MODEL_PATH = "bpe_model"
 DATASET_PATH = "enwik8.gz"
 
-trsh = 5
-learning_rate=5e-6
-epoch = int(1e5)
 VALIDATE_EVERY  = 100
 GENERATE_EVERY  = 1000
 
@@ -45,14 +42,17 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("batch_size", 4,"batch_size")
 flags.DEFINE_integer("vocab_size", 256,"vocab_size")
-flags.DEFINE_integer("embedding_size", 64,"Embedding size")
+flags.DEFINE_integer("embedding_size", 512,"Embedding size")
 flags.DEFINE_integer("top_k", 3,"Embedding size")
 flags.DEFINE_float("top_p", 0.9,"Embedding size")
 flags.DEFINE_integer("seq_len", 3072,"Embedding size")
-flags.DEFINE_bool("nucleus_sampling", False, "s")
+flags.DEFINE_integer("epoch", 100000,"Embedding size")
+flags.DEFINE_bool("restore", False, "s")
+
+flags.DEFINE_bool("nucleus_sampling", True, "s")
 
 flags.DEFINE_string("optimizer", "adam","optimizer type")
-flags.DEFINE_float("learning_rate", 5e-5, "The initial learning")
+flags.DEFINE_float("learning_rate", 1e-4, "The initial learning")
 flags.DEFINE_bool("distributed", False, "Whether to use TPU or FLAGS.distributed/CPU.")
 
 flags.DEFINE_string("mode", "gpt2","Language models (choose one btw gpt2 or reformer")
@@ -141,7 +141,7 @@ def main(argv):
         with mirrored_strategy.scope():
             model_tf = TFReformerLM(
                 num_tokens= FLAGS.vocab_size,
-                emb = 512,
+                emb = FLAGS.embedding_size,
                 depth = 6,   # batch 4 full attention 8 이면 안돌아감 
                 max_seq_len = FLAGS.seq_len,
                 heads = 8,
@@ -162,7 +162,7 @@ def main(argv):
                         name='accuracy')
             train_loss = tf.keras.metrics.Mean(name='train_loss')
 
-            model_tf.set_optimizer(tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.999,
+            model_tf.set_optimizer(tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=0.9, beta_2=0.999,
                                                                     epsilon=1e-8))
             model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=False)
 
@@ -171,7 +171,7 @@ def main(argv):
     else:
         model_tf = TFReformerLM(
             num_tokens= FLAGS.vocab_size,
-            emb = 512,
+            emb = FLAGS.embedding_size,
             depth = 6,   # batch 4 full attention 8 이면 안돌아감 
             max_seq_len = FLAGS.seq_len,
             heads = 8,
@@ -179,12 +179,13 @@ def main(argv):
             causal = True,        # auto-regressive or not
             bucket_size = 64,     # average size of qk per bucket, 64 was recommended in paper
             n_hashes = 4,         # 4 is permissible per author, 8 is the best but slower
-            ff_chunks = 16,      # number of chunks for feedforward layer, make higher if there are memory issues
+            ff_chunks = 8,      # number of chunks for feedforward layer, make higher if there are memory issues
             weight_tie = True,   # tie parameters of each layer for no memory per additional depth
             attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
             use_full_attn = True   # use full self attention, for comparison
         
         )
+
 
 
         #training settings 
@@ -194,9 +195,10 @@ def main(argv):
                     name='accuracy')
         train_loss = tf.keras.metrics.Mean(name='train_loss')
 
-        model_tf.set_optimizer(tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.999,
+        model_tf.set_optimizer(tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=0.9, beta_2=0.999,
                                                                 epsilon=1e-8))
-        model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=False)
+        model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=FLAGS.restore)
+
 
     sg = SequenceGenerator(model_tf, MODEL_DIR,FLAGS)#initialize model generator
 
@@ -207,7 +209,7 @@ def main(argv):
     if FLAGS.distributed:
         with mirrored_strategy.scope():
 
-            for e in range(1,epoch+1):
+            for e in range(1,FLAGS.epoch+1):
                 for (step, (inputs, targets)) in enumerate(d):
                     
                     step = ( e  ) * (step+1)
@@ -244,7 +246,7 @@ def main(argv):
                                                         temperature=1.0,
                                                         top_k=8,
                                                         top_p=0.9,
-                                                        nucleus_sampling=True)
+                                                        nucleus_sampling=FLAGS.nucleus_sampling)
 
                         print("Generated seq by model:- " + generated_seq)     
 
@@ -255,7 +257,7 @@ def main(argv):
 
 
     else:
-        for e in range(1,epoch+1):
+        for e in range(1,FLAGS.epoch+1):
             for (step, (inputs, targets)) in enumerate(d):
                 step = ( e  ) * (step+1)
                 #y = model_tf(inputs)
@@ -288,7 +290,7 @@ def main(argv):
                                                     temperature=1.0,
                                                     top_k=8,
                                                     top_p=0.9,
-                                                    nucleus_sampling=True)
+                                                    nucleus_sampling=FLAGS.nucleus_sampling)
 
                     print("Generated seq by model:- " + generated_seq)     
 

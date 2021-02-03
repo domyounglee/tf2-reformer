@@ -61,8 +61,7 @@ class ReversibleSequence(tf.keras.Model):
         vars_all = []
         #tf.print(y.shape)
         #tf.print(dy.shape)
-        y = tf.concat([y, y], axis = -1) #revnet
-        dy = tf.concat([dy, dy], axis = -1) #revnet
+
         for i in reversed(range(len(self.blocks))):
 
             block = self.blocks[i]
@@ -72,8 +71,6 @@ class ReversibleSequence(tf.keras.Model):
             grads_all += grads
             vars_all += vars_
 
-        y = tf.reduce_sum(tf.split(y, 2, axis=-1), axis=0)
-        dy = tf.reduce_sum(tf.split(dy, 2, axis=-1), axis=0)
 
         return y,dy, grads_all, vars_all
 
@@ -151,7 +148,7 @@ class ReversibleBlock(tf.keras.Model):
         dx1 = dy1 + dz1
         del dy1, dz1
 
-        with tf.GradientTape() as tape_3:
+        with tf.GradientTape(persistent=True) as tape_3:
             tape_3.watch(x2)
             fx2 = f_(x2)
     

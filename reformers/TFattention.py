@@ -38,32 +38,30 @@ class MultiHeadAttention(tf.keras.Model):
 
         assert d_model % self.num_heads == 0
         self.depth = d_model // self.num_heads
-        self.query_dense = Dense(units=d_model)
-        self.key_dense = Dense(units=d_model)
-        self.value_dense = Dense(units=d_model)
-        self.dense = Dense(units=d_model)
+        self.qk_dense = Dense(units=d_model, use_bias=False)
+        self.value_dense = Dense(units=d_model, use_bias=False)
+        self.dense = Dense(units=d_model, use_bias=False)
 
     def merge_heads(self,v,batch_size):
-        return tf.reshape(tf.transpose(tf.reshape(v, (batch_size, -1, self.num_heads, self.depth)), perm=[0, 2, 1, 3]), (batch_size , -1, self.d_model)) 
+        return tf.reshape(tf.transpose(v, perm=[0, 2, 1, 3]), (batch_size , -1, self.d_model)) 
 
     def split_heads(self,v,batch_size):
         return tf.transpose(tf.reshape(v, (batch_size, -1, self.num_heads, self.depth)), perm=[0, 2, 1, 3])
 
 
-    def scaled_dot_product(self, q, k, v):
-        matmul_qk = tf.matmul(q, k, transpose_b=True)  # (..., seq_len_q, seq_len_k)
-        dk = tf.cast(tf.shape(k)[-1], tf.float32)
+    def scaled_dot_product(self, qk, v):
+        qk_norm,_ = tf.linalg.normalize(qk, 2, axis=-1)
+        matmul_qk = tf.matmul(qk, qk_norm, transpose_b=True)  # (..., seq_len_q, seq_len_k)
+
+        dk = tf.cast(tf.shape(qk)[-1], tf.float32)
         scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
         
-
-        dk = tf.cast(tf.shape(k)[-1], tf.float32)
-        scaled_attention_logits = scaled_attention_logits / tf.math.sqrt(dk)
 
 
         def create_look_ahead_mask(size):
             mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
             return mask  # (seq_len, seq_len) 
-        mask = create_look_ahead_mask(tf.shape(k)[-2])
+        mask = create_look_ahead_mask(tf.shape(qk)[-2])
       
         if mask is not None:
             scaled_attention_logits += (mask * -1e9)
@@ -79,24 +77,20 @@ class MultiHeadAttention(tf.keras.Model):
         return output, attention_weights
 
     def call(self, inputs):
-        query, key, value = inputs['query'], inputs['key'], inputs[
-            'value']
-        batch_size = tf.shape(query)[0]
-        dim = tf.shape(query)[-1]
+        qk,  v = inputs['qk'], inputs['v']
+
+        batch_size = tf.shape(qk)[0]
+        dim = tf.shape(qk)[-1]
         # linear layers
-        query = self.query_dense(query)
-        key = self.key_dense(key)
-        value = self.value_dense(value)
+        qk = self.qk_dense(qk)
+        v = self.value_dense(v)
 
         # split heads
-        query = self.split_heads(query, batch_size)
-        key = self.split_heads(key, batch_size)
-        value = self.split_heads(value, batch_size)
+        qk = self.split_heads(qk, batch_size)
+        v = self.split_heads(v, batch_size)
 
-        output,attention_map = self.scaled_dot_product(query, key, value)
-        #scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
-        #concat_attention = tf.reshape(scaled_attention,
-        #                            (batch_size, -1, self.d_model))
+        output, attention_map = self.scaled_dot_product(qk, v)
+
         scaled_attention = self.merge_heads(output,batch_size)
         outputs = self.dense(scaled_attention)
         return outputs
@@ -114,8 +108,8 @@ class TFSelfAttention(tf.keras.Model):
         b, t, e = inputs.shape
 
 
-        output = self.attn({'query' : inputs, 'key' : inputs, 'value' : inputs})
-        return self.to_out(output)
+        output = self.attn({'qk' : inputs, 'v' : inputs})
+        return output
 
 
 class TFFeedForward(tf.keras.Model):
