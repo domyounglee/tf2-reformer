@@ -24,6 +24,8 @@ import math
 import tensorflow as tf
 from tensorflow.keras.layers import Dense
 
+SELF_ATTN_INF_NEG = -5e4
+LOOK_AHEAD_ATTN_INF_NEG = -1e38
 def mask_fill_inf(matrix, mask):
     negmask = 1 - mask
     num = 3.4 * math.pow(10, 38)
@@ -41,6 +43,9 @@ class MultiHeadAttention(tf.keras.Model):
         self.qk_dense = Dense(units=d_model, use_bias=False)
         self.value_dense = Dense(units=d_model, use_bias=False)
         self.dense = Dense(units=d_model, use_bias=False)
+        self.layer_num= None 
+        self.seed = None 
+
 
     def merge_heads(self,v,batch_size):
         return tf.reshape(tf.transpose(v, perm=[0, 2, 1, 3]), (batch_size , -1, self.d_model)) 
@@ -56,27 +61,36 @@ class MultiHeadAttention(tf.keras.Model):
         dk = tf.cast(tf.shape(qk)[-1], tf.float32)
         scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
         
-
+        def create_self_mask(size):
+             #to just see  < t elements
+            self_mask = tf.linalg.band_part(tf.ones((size, size)), 0, 0) # for qk attention 
+            
+            return self_mask  # (seq_len, seq_len) 
+        self_mask = create_self_mask(tf.shape(qk)[-2])
 
         def create_look_ahead_mask(size):
-            mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+             #to just see  < t elements
+            mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0) # 1's on >t 
+
             return mask  # (seq_len, seq_len) 
         mask = create_look_ahead_mask(tf.shape(qk)[-2])
       
-        if mask is not None:
-            scaled_attention_logits += (mask * -1e9)
+        scaled_attention_logits += (mask * LOOK_AHEAD_ATTN_INF_NEG) + (self_mask  * SELF_ATTN_INF_NEG)
 
 
         attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
+        
+        tf.random.set_seed(self.seed)
+        attention_weights_ = tf.nn.dropout(attention_weights, rate=0.1,  name="attn_dropout")
 
-        attention_weights = tf.nn.dropout(attention_weights, rate=0.1, name="attn_dropout")
-        output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
+        output = tf.matmul(attention_weights_, v)  # (..., seq_len_q, depth_v)
 
         
 
-        return output, attention_weights
+        return output, attention_weights_
 
-    def call(self, inputs):
+    def call(self, inputs, seed_):
+        self.seed =seed_ 
         qk,  v = inputs['qk'], inputs['v']
 
         batch_size = tf.shape(qk)[0]
@@ -88,7 +102,7 @@ class MultiHeadAttention(tf.keras.Model):
         # split heads
         qk = self.split_heads(qk, batch_size)
         v = self.split_heads(v, batch_size)
-
+        #tf.print(qk)
         output, attention_map = self.scaled_dot_product(qk, v)
 
         scaled_attention = self.merge_heads(output,batch_size)
@@ -104,11 +118,11 @@ class TFSelfAttention(tf.keras.Model):
         self.to_out = Dense(emb)
         self.causal = causal
 
-    def call(self, inputs):
+    def call(self, inputs,  seed_):
         b, t, e = inputs.shape
 
 
-        output = self.attn({'qk' : inputs, 'v' : inputs})
+        output = self.attn({'qk' : inputs, 'v' : inputs}, seed_)
         return output
 
 

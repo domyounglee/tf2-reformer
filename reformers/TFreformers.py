@@ -54,7 +54,7 @@ class TFReformer(tf.keras.Model):
         blocks = []
         norm_type = ScaleNorm if use_scale_norm else LayerNormalization
 
-        for _ in range(depth):
+        for i in range(depth):
             attn = get_attn()
             parallel_net = get_attn() if twin_attention else get_ff()
             f = WithNorm(norm_type, emb, attn)
@@ -118,7 +118,7 @@ class TFReformerLM(tf.keras.Model):
 
     def after_reformer(self, inputs):
         
-        inputs = tf.reduce_sum(tf.split(inputs, 2, axis=-1), axis=0) #merge the split input at here 
+        inputs = tf.reduce_mean(tf.split(inputs, 2, axis=-1), axis=0) #merge the split input at here 
         reformer_outputs = self.lastlayernorm(inputs)
         logits = self.to_logits(reformer_outputs)
         return logits
@@ -233,13 +233,22 @@ class TFReformerLM(tf.keras.Model):
         total_vars_all.extend(tape_1.watched_variables())
 
 
-
         
         y, dy, grads_all, vars_all = self.reformer.model_layers.backward_grads_and_vars(reformer_outputs,reformer_outputs_grad)
 
         total_grads_all.extend(grads_all)
         total_vars_all.extend(vars_all)
-
+        
+        """
+        for i,var in enumerate(vars_all):
+            tf.print(var.name)
+            tf.print(var.shape)
+            tf.print(var)
+            tf.print(grads_all[i])
+            tf.print("=="*100)
+        """
+        diff = tf.reduce_sum(tf.abs(y-embedded_inputs))
+        tf.print(diff)
 
         del tape_1
 

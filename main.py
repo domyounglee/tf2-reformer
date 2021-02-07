@@ -14,7 +14,7 @@ from absl import flags
 from absl import logging
 import random
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 physical_devices = tf.config.list_physical_devices('GPU')
 try:
@@ -83,7 +83,7 @@ def main(argv):
         X = np.fromstring(file.read(int(95e6)), dtype=np.uint8)
         trX, vaX = np.split(X, [int(90e6)])
         print(X[:10])
-        data_train, data_val = tf.convert_to_tensor(trX,dtype=tf.uint8), tf.convert_to_tensor(vaX,dtype=tf.int32)
+        data_train, data_val = tf.convert_to_tensor(trX,dtype=tf.int32), tf.convert_to_tensor(vaX,dtype=tf.int32)
         print(data_train[:100])
 
     """
@@ -108,6 +108,7 @@ def main(argv):
             yield inputs,targets      
     
     if FLAGS.distributed:
+
         with mirrored_strategy.scope():
             d = tf.data.Dataset.from_generator( \
                         functools.partial(generator_fn, dataset=sampler_dataset), \
@@ -124,20 +125,7 @@ def main(argv):
             d_val=d_val.prefetch(10)
             d_val = mirrored_strategy.experimental_distribute_dataset(d_val)
 
-    else:
-        d = tf.data.Dataset.from_generator( \
-                    functools.partial(generator_fn, dataset=sampler_dataset), \
-                    output_types=(tf.uint8, tf.uint8), output_shapes=([FLAGS.seq_len],[FLAGS.seq_len]))
-        d=d.batch(FLAGS.batch_size)
-        d=d.prefetch(10)
-
-        d_val = tf.data.Dataset.from_generator( \
-                    functools.partial(generator_fn, dataset=sampler_dataset_val), \
-                    output_types=(tf.uint8, tf.uint8), output_shapes=([FLAGS.seq_len],[FLAGS.seq_len]))
-        d_val=d_val.batch(FLAGS.batch_size)
-        d_val=d_val.prefetch(10)
-
-    if FLAGS.distributed :
+            
         with mirrored_strategy.scope():
             model_tf = TFReformerLM(
                 num_tokens= FLAGS.vocab_size,
@@ -167,8 +155,20 @@ def main(argv):
             model_tf.create_checkpoint_manager(MODEL_DIR, max_to_keep=5, load_model=False)
 
 
-
     else:
+        
+        d = tf.data.Dataset.from_generator( \
+                    functools.partial(generator_fn, dataset=sampler_dataset), \
+                    output_types=(tf.uint8, tf.uint8), output_shapes=([FLAGS.seq_len],[FLAGS.seq_len]))
+        d=d.batch(FLAGS.batch_size)
+        d=d.prefetch(10)
+
+        d_val = tf.data.Dataset.from_generator( \
+                    functools.partial(generator_fn, dataset=sampler_dataset_val), \
+                    output_types=(tf.uint8, tf.uint8), output_shapes=([FLAGS.seq_len],[FLAGS.seq_len]))
+        d_val=d_val.batch(FLAGS.batch_size)
+        d_val=d_val.prefetch(10)
+
         model_tf = TFReformerLM(
             num_tokens= FLAGS.vocab_size,
             emb = FLAGS.embedding_size,
