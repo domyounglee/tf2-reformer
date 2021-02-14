@@ -116,11 +116,11 @@ class Chunk(layers.Layer):
         self.chunks = chunks
         self.fn = fn
 
-    def call(self, inputs):
+    def call(self, inputs, seed_):
 
         chunks = tf.split(inputs, self.chunks, axis= self.axis)
         #tf.print("chunk")
         #tf.print(inputs.shape)
         #tf.print(chunks[0].shape)
         #tf.print(len(chunks))
-        return tf.concat([self.fn(c) for c in chunks], axis = self.axis)
+        return tf.concat([self.fn(c, float(i*10)*seed_) for i,c in enumerate(chunks)], axis = self.axis)

@@ -125,18 +125,27 @@ class TFSelfAttention(tf.keras.Model):
         output = self.attn({'qk' : inputs, 'v' : inputs}, seed_)
         return output
 
-
 class TFFeedForward(tf.keras.Model):
-    def __init__(self, emb, mult = 4):
+    def __init__(self, emb, mult = 8):
         super().__init__()
         self.emb = emb
         self.proj_in = Dense(emb * mult)
         self.proj_out = Dense(emb)
-
-    def call(self, inputs):
+    def gelu_(self, x):
+        return 0.5 * x * (1 + tf.math.tanh(tf.math.sqrt(2 / math.pi) * (x + 0.044715 * tf.math.pow(x, 3))))
+ 
+    def call(self, inputs, seed_2):
         #tf.print("fdafdsaf")
-        #tf.print(inputs.shape)
         inputs = self.proj_in(inputs)
-        inputs = tf.keras.activations.relu(inputs)
+        inputs, inputs_v = tf.split(inputs, num_or_size_splits=2, axis=-1)
+
+        inputs = self.gelu_(inputs) * inputs_v
+
+        tf.random.set_seed(seed_2)
+        inputs = tf.nn.dropout(inputs, rate=0.1,  name="ff_dropout")
+        
+
+
+
         inputs = self.proj_out(inputs)
         return inputs

@@ -101,12 +101,13 @@ class ReversibleBlock(tf.keras.Model):
 
     def call(self, x,  training=True, concat=True):
         """Apply residual block to inputs."""
-        self.seed = time.time()
+        self.seed = time.time()*1000.0
+        self.seed_2 = time.time()*10.0
         x1, x2 = tf.split(x, num_or_size_splits=2, axis=self.axis)
 
-        f_x2 = self.f(x2, self.seed, training=True)
+        f_x2 = self.f(x2, self.seed)
         y1 = f_x2 + x1
-        g_y1 = self.g(y1, training=True)
+        g_y1 = self.g(y1,self.seed_2   )
         y2 = g_y1 + x2
 
         """
@@ -141,7 +142,7 @@ class ReversibleBlock(tf.keras.Model):
             
             tape_2.watch(z1)
            
-            g_z1 = g_(z1)
+            g_z1 = g_(z1, self.seed_2 )
         
 
         grad_result = tape_2.gradient(g_z1,g_weights+[z1],dy2)
@@ -191,4 +192,3 @@ class ReversibleBlock(tf.keras.Model):
         dx = tf.concat([tf.stop_gradient(dx1), tf.stop_gradient(dx2)], axis=self.axis)
         
         return x, dx, grads_, vars_
-

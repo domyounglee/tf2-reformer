@@ -75,7 +75,11 @@ class TFReformer(tf.keras.Model):
         return x
 
 class TFReformerLM(tf.keras.Model):
-    def __init__(self, num_tokens, emb, depth, max_seq_len, heads = 8, bucket_size = 64, n_hashes = 8, ff_chunks = 100, attn_chunks = None, causal = False, weight_tie = False, lsh_dropout = 0., random_rotations_per_head = False, twin_attention = False, use_scale_norm = False, use_full_attn = False):
+    def __init__(self, num_tokens, emb, depth, max_seq_len, heads = 8, \
+        bucket_size = 64, n_hashes = 8, ff_chunks = 100, attn_chunks = None, \
+        causal = False, weight_tie = False, lsh_dropout = 0., \
+        random_rotations_per_head = False, twin_attention = False, \
+            use_scale_norm = False, use_full_attn = False):
         super().__init__()
         self.token_emb = Embedding(num_tokens, emb)
         self.pos_emb = Embedding(max_seq_len, emb)
@@ -133,7 +137,7 @@ class TFReformerLM(tf.keras.Model):
         return logits
 
 
- 
+    
     def train_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=True,distributed = False ):
         if distributed :
 
@@ -161,7 +165,6 @@ class TFReformerLM(tf.keras.Model):
 
         return loss
 
-    @tf.function 
     def eval_step(self,inputs,targets,loss_object,loss_metric,mirrored_strategy=None, training=False,distributed = False ):
         if distributed :
 
@@ -185,7 +188,7 @@ class TFReformerLM(tf.keras.Model):
 
             loss_metric(loss)
         return loss   
-
+    
     def backward_grads_and_vars(self,inputs,targets,loss_object,training=True):
         total_grads_all = []
         total_vars_all = []
@@ -200,7 +203,6 @@ class TFReformerLM(tf.keras.Model):
                 return sequence_avg_loss
 
         with tf.GradientTape() as tape_0:
-            inputs = tf.identity(inputs)
             embedded_inputs = self.before_reformer(inputs)
 
 
@@ -210,7 +212,6 @@ class TFReformerLM(tf.keras.Model):
 
         #for gradient of logits
         with tf.GradientTape() as tape_1:
-            reformer_outputs = tf.identity(reformer_outputs)
             tape_1.watch(reformer_outputs)
             logits = self.after_reformer(reformer_outputs)
         
@@ -247,7 +248,7 @@ class TFReformerLM(tf.keras.Model):
             tf.print(grads_all[i])
             tf.print("=="*100)
         """
-        diff = tf.reduce_sum(tf.abs(y-embedded_inputs))
+        diff = tf.reduce_sum(y-embedded_inputs)
         tf.print(diff)
 
         del tape_1
