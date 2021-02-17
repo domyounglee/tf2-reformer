@@ -89,7 +89,7 @@ class TFLSHAttention(tf.keras.Model):
 
         return buckets#(batch, self.seqlen*n_hashes)
 
-    def call(self, qk, v):
+    def call(self, qk, v, seed_):
         
         batch_size, seqlen, _ = qk.shape
         device = qk.device
@@ -186,6 +186,7 @@ class TFLSHAttention(tf.keras.Model):
         dots_logsumexp = tf.math.reduce_logsumexp(dots, axis=-1, keepdims=True) #2*bucket_size 에 대한 partition function 
 
         dots = tf.exp(dots - dots_logsumexp)#softmax 
+        tf.random.set_seed(self.seed)
         dots = self.dropout(dots)
 
         bo = tf.einsum('buij,buje->buie', dots, bv)#batch, n_bins*n_hashes, bucket_size, emb_size
@@ -230,42 +231,52 @@ class TFLSHAttention(tf.keras.Model):
         assert out.shape == v.shape
         return out, buckets
 
+        
 class TFLSHSelfAttention(tf.keras.Model):
-    def __init__(self, emb, heads = 8, bucket_size = 64, n_hashes = 8, causal = False, attn_chunks = None, random_rotations_per_head = False, attend_across_buckets = False, allow_duplicate_attention = True, **kwargs):
+    def __init__(self, d_model, num_heads = 8, bucket_size = 64, n_hashes = 8, causal = False, attn_chunks = None, random_rotations_per_head = False, attend_across_buckets = False, allow_duplicate_attention = True, **kwargs):
         super(TFLSHSelfAttention, self).__init__()
-        assert emb % heads == 0, 'dimensions must be divisible by number of heads'
+        self.num_heads = num_heads
+        self.d_model = d_model
 
-        self.emb = emb
-        self.heads = heads
-        self.attn_chunks = heads if attn_chunks is None else attn_chunks
+        assert d_model % self.num_heads == 0 , 'dimensions must be divisible by number of heads'
+        self.depth = d_model // self.num_heads
+        self.qk_dense = Dense(units=d_model, use_bias=False)
+        self.value_dense = Dense(units=d_model, use_bias=False)
+        self.dense = Dense(units=d_model)
 
-        self.toqk = Dense(emb, use_bias = False)
-        self.tov = Dense(emb, use_bias = False)
-        self.to_out = Dense(emb)
+        self.layer_num= None 
+        self.seed = None 
+
+
+        self.attn_chunks = num_heads if attn_chunks is None else attn_chunks
+
 
         self.bucket_size = bucket_size
         self.lsh_attn = TFLSHAttention(bucket_size=bucket_size, causal=causal, random_rotations_per_head=random_rotations_per_head, attend_across_buckets = attend_across_buckets,  allow_duplicate_attention = allow_duplicate_attention, **kwargs)
 
-    def call(self, inputs):
-        b, t, e, h = *inputs.shape, self.heads
+
+    def call(self, inputs, seed_):
+        b, t, e, h = *inputs.shape, self.num_heads
 
         assert t % self.bucket_size == 0, f'Sequence length needs to be divisible by target bucket size - {self.bucket_size}'
 
-        qk = self.toqk(inputs)
-        v = self.tov(inputs)
+        qk = self.qk_dense(inputs)
+        v = self.value_dense(inputs)
 
         def merge_heads(v):
-            return tf.reshape(tf.transpose(tf.reshape(v, (b, t, h, -1)), perm=[0, 2, 1, 3]), (b * h, t, -1)) 
+            return tf.reshape(tf.transpose(v, perm=[0, 2, 1, 3]), (b , -1,  e)) 
 
         def split_heads(v):
-            return tf.transpose(tf.reshape(v, (b, h, t, -1)), perm=[0, 2, 1, 3])
+            return tf.transpose(tf.reshape(v, (b, t, h, -1)), perm=[0, 2, 1, 3])
 
-        qk = merge_heads(qk)
-        v = merge_heads(v)
+
+
+        qk = split_heads(qk)
+        v = split_heads(v)
         
-        outputs = process_inputs_chunk(self.lsh_attn, qk, v, chunks=self.attn_chunks)
+        outputs = process_inputs_chunk(self.lsh_attn, qk, v, seed_, chunks=self.attn_chunks)
         attn_out = tf.concat([output for (output, _) in outputs], axis=0)
 
-        out = tf.reshape(split_heads(attn_out), (b, t, e))
+        out = merge_heads(attn_out)
 
-        return self.to_out(out)
+        return self.dense(out)

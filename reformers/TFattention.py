@@ -42,7 +42,7 @@ class MultiHeadAttention(tf.keras.Model):
         self.depth = d_model // self.num_heads
         self.qk_dense = Dense(units=d_model, use_bias=False)
         self.value_dense = Dense(units=d_model, use_bias=False)
-        self.dense = Dense(units=d_model, use_bias=False)
+        self.dense = Dense(units=d_model)
         self.layer_num= None 
         self.seed = None 
 
@@ -115,7 +115,6 @@ class TFSelfAttention(tf.keras.Model):
         super().__init__()
         assert emb % heads == 0, 'dimensions must be divisible by number of heads'
         self.attn = MultiHeadAttention(emb, heads)
-        self.to_out = Dense(emb)
         self.causal = causal
 
     def call(self, inputs,  seed_):

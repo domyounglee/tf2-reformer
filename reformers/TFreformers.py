@@ -24,9 +24,9 @@ import tensorflow as tf
 from tensorflow.keras.layers import Embedding, LayerNormalization, Dense
 from .TFefficient_attention import TFLSHAttention, TFLSHSelfAttention
 from .TFattention import TFSelfAttention, TFFeedForward,MultiHeadAttention
-from .TFutils import cache_fn, Chunk, WithNorm
+from .TFutils import cache_fn, Chunk, WithNorm, TF_AxialPositionalEmbedding
 from .blocks import ReversibleBlock, ReversibleSequence
-
+import math
 class TFReformer(tf.keras.Model):
     def __init__(self, emb, depth, max_seq_len, heads = 8, bucket_size = 64, 
                         n_hashes = 8, ff_chunks = 100, attn_chunks = None, 
@@ -82,7 +82,10 @@ class TFReformerLM(tf.keras.Model):
             use_scale_norm = False, use_full_attn = False):
         super().__init__()
         self.token_emb = Embedding(num_tokens, emb)
-        self.pos_emb = Embedding(max_seq_len, emb)
+        #self.pos_emb = Embedding(max_seq_len, emb)
+        axial_position_shape =  (math.ceil(max_seq_len / bucket_size), bucket_size)
+        tf.print(axial_position_shape)
+        self.pos_emb = TF_AxialPositionalEmbedding(emb, axial_shape=axial_position_shape)
         self.reformer = TFReformer(emb, depth, max_seq_len, heads = heads,lsh_attend_across_buckets = False, 
                                     bucket_size = bucket_size, n_hashes = n_hashes, ff_chunks = ff_chunks, 
                                     attn_chunks = attn_chunks, causal = causal, weight_tie = weight_tie, 
@@ -116,7 +119,8 @@ class TFReformerLM(tf.keras.Model):
 
     def before_reformer(self, inputs):
         
-        inputs = self.token_emb(inputs)+ self.pos_emb(tf.range(inputs.shape[1]))
+        inputs = self.token_emb(inputs)
+        inputs +=  self.pos_emb(inputs)
         inputs = tf.concat([inputs, inputs], axis = -1) #revnet
         return inputs
 
