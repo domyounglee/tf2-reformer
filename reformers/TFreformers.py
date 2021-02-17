@@ -118,7 +118,6 @@ class TFReformerLM(tf.keras.Model):
 
 
     def before_reformer(self, inputs):
-        
         inputs = self.token_emb(inputs)
         inputs +=  self.pos_emb(inputs)
         inputs = tf.concat([inputs, inputs], axis = -1) #revnet

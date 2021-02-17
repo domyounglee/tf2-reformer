@@ -150,14 +150,14 @@ class TF_AxialPositionalEmbedding(layers.Layer):
             ax_shape = [1] * len(self.shape)
             ax_shape[ind] = shape
             ax_shape = (1, *ax_shape, axial_dim)
-            tf.print(ax_shape)
+
 
 
 
 
 
             initializer = tf.keras.initializers.RandomNormal(mean=0., stddev=1.)
-            init_values = initializer(shape=(2, 2))
+            init_values = initializer(shape=ax_shape)
             ax_emb = tf.Variable(
                                 name=f"ax_emb_{ind}", 
                                  initial_value=init_values, 
@@ -167,15 +167,17 @@ class TF_AxialPositionalEmbedding(layers.Layer):
             #ax_emb = nn.Parameter(torch.zeros(ax_shape).normal_(0, 1))
             self.weights_.append(ax_emb)
 
-    def forward(self, x):
+    def call(self, x):
         b, t, e = x.shape
         assert (t <= self.max_seq_len), f'Sequence length ({t}) must be less than the maximum sequence length allowed ({self.max_seq_len})'
         embs = []
-
-        for ax_emb in self.weights_.to_list():
+        for ind, ax_emb in enumerate(self.weights_.to_list()):
             axial_dim = ax_emb.shape[-1]
-            expand_shape = (b, *self.shape, axial_dim)
+            ax_shape = list(self.shape)
+            ax_shape[ind] = 1
+            expand_shape = tf.constant((b, *ax_shape, 1),tf.int32)
             #emb = ax_emb.expand(expand_shape).reshape(b, self.max_seq_len, axial_dim)
+
             emb = tf.reshape(tf.tile(ax_emb,expand_shape),(b, self.max_seq_len, axial_dim))
             embs.append(emb)
 
