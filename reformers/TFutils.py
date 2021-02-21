@@ -22,6 +22,8 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers
+from operator import mul
+from functools import reduce
 
 
 def get_padding(x, padding_value=0, dtype=tf.float32):
@@ -49,7 +51,6 @@ def sort_key_val(t1, t2, axis=-1):
 
     t2 = tf.broadcast_to(t2, t1.shape)
 
-
     return values, tf.gather(tf.reshape(t2,[-1]), tf.argsort(t1, axis=axis)+offset, axis=axis)
 
 def batched_index_select(values, indices):
@@ -64,8 +65,8 @@ def batched_index_select(values, indices):
     flatten_values = tf.reshape(values,[-1,last_dim])
     return tf.gather(flatten_values, indices+offset)
 
-def process_inputs_chunk(fn, *args, seed_, chunks=1):
-    chunked_inputs = list(map(lambda x: tf.split(x, chunks, axis=0), args))
+def process_inputs_chunk(fn, *args, seed_=None, chunks=1):
+    chunked_inputs = list(map(lambda x: tf.split(x, chunks, axis=-2), args))
     outputs = [fn(*input_pair, seed_) for i,input_pair in enumerate(zip(*chunked_inputs))] #chunking 된 q ,kv 끼리 묶여서 input_pair를 만든다. 
     return outputs
 
@@ -78,6 +79,19 @@ def cache_fn(f):
         cache = f(*args, **kwargs)
         return cache
     return cached_fn
+
+def merge_dims(ind_from, ind_to, tensor):
+    shape = list(tensor.shape)
+    arr_slice = slice(ind_from, ind_to + 1)
+    shape[arr_slice] = [reduce(mul, shape[arr_slice])]
+    return tf.reshape(tensor,tuple(shape))
+
+def split_dims(ind_from, ind_to, tensor):
+    shape = list(tensor.shape)
+    arr_slice = slice(ind_from, ind_to + 1)
+    shape[arr_slice] = [reduce(mul, shape[arr_slice])]
+    return tf.reshape(tensor,tuple(shape))
+
 
 class ScaleNorm(layers.Layer):
     def __init__(self, emb, eps):
@@ -125,10 +139,6 @@ class Chunk(layers.Layer):
         #tf.print(len(chunks))
         return tf.concat([self.fn(c, seed_) for i,c in enumerate(chunks)], axis = self.axis)
 
-import torch
-from torch import nn
-from operator import mul
-from functools import reduce
 
 class TF_AxialPositionalEmbedding(layers.Layer):
     def __init__(self, dim, axial_shape, axial_dims = None):

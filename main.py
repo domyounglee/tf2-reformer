@@ -14,7 +14,7 @@ from absl import flags
 from absl import logging
 import random
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 physical_devices = tf.config.list_physical_devices('GPU')
 try:
@@ -182,7 +182,7 @@ def main(argv):
             ff_chunks = 8,      # number of chunks for feedforward layer, make higher if there are memory issues
             weight_tie = True,   # tie parameters of each layer for no memory per additional depth
             attn_chunks = 8,        # process lsh attention in chunks, only way for memory to fit when scaling to 16k tokens
-            use_full_attn = True   # use full self attention, for comparison
+            use_full_attn = False   # use full self attention, for comparison
         
         )
 

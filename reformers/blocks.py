@@ -155,10 +155,10 @@ class ReversibleBlock(tf.keras.Model):
 
         x2 = y2 - g_z1
         del y2, g_z1
-    
-        #tf.print("=="*100)
-        #tf.print(tf.reduce_sum(tf.abs(x2-self.x2)))
-
+        """
+        tf.print("=="*100)
+        tf.print(tf.reduce_sum(x2-self.x2))
+        """
         dx1 = dy1 + dz1
         del dy1, dz1
         
@@ -170,14 +170,14 @@ class ReversibleBlock(tf.keras.Model):
         df_weights, dx2 = grad_result[:-1], grad_result[-1]
        
         x1 = y1 - f_x2
+        """
+        tf.print("@"*100)
+        tf.print(tf.reduce_sum(x1-self.x1))
 
-        #tf.print("@"*100)
-        #tf.print(tf.reduce_sum(tf.abs(x1-self.x1)))
 
-
-        #tf.print("$"*100)
-        #tf.print(tf.reduce_sum(tf.abs(f_x2-self.f_x2)))
-
+        tf.print("$"*100)
+        tf.print(tf.reduce_sum(f_x2-self.f_x2))
+        """
         del y1, f_x2
 
 

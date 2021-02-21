@@ -251,6 +251,7 @@ class TFReformerLM(tf.keras.Model):
             tf.print(grads_all[i])
             tf.print("=="*100)
         """
+        tf.print("**"*100)
         diff = tf.reduce_sum(y-embedded_inputs)
         tf.print(diff)
 
