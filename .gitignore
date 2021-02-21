@@ -2,3 +2,4 @@
 workspace.code-workspace
 __pycache__/
 ckpt
+.ipynb_checkpoints
