@@ -1,14 +1,11 @@
 # Reformer TF2
-(inference is not finished yet)
+
+Reproduced the Revnet and LSH attention  in tf2 
 
 ## Use Docker 
     docker pull tensorflow/tensorflow:2.3.0-gpu
     ./docker_tf2.sh
 Don't forget to change the mapping path 
-
-## requirements
-    pip install -r requirements.txt
-You need only *sentencepiece* packeage 
 
 ## dataset
 
