@@ -260,6 +260,7 @@ def main(argv):
         for e in range(1,FLAGS.epoch+1):
             for (step, (inputs, targets)) in enumerate(d):
                 step = ( e  ) * (step+1)
+
                 #y = model_tf(inputs)
                 #loss = tf.reduce_mean(get_loss(targets, y ,loss_object))
                 #print(loss)

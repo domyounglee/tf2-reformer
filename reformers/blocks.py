@@ -48,10 +48,13 @@ class ReversibleSequence(tf.keras.Model):
         super(ReversibleSequence, self).__init__()
         self.blocks = blocks
 
+        self.block_kwargs = {'f_args': {}, 'g_args': {}}
+
+
     def call(self, h, training=True):
         """Apply reversible block to inputs."""
-        for block in self.blocks:
-            h = block(h, training=training)
+        for layer_i,block in enumerate(self.blocks):
+            h = block(h, layer_i, **self.block_kwargs,  training=training)
         return h
 
     def backward_grads_and_vars(self, y, dy, training=True):
@@ -62,12 +65,13 @@ class ReversibleSequence(tf.keras.Model):
         #tf.print(y.shape)
         #tf.print(dy.shape)
 
+
         for i in reversed(range(len(self.blocks))):
             #print(i)
             block = self.blocks[i]
-            
+            layer_i = i
             y, dy, grads, vars_ = block.backward_grads_and_vars(
-                y, dy, training=training)
+                y, dy, layer_i, **self.block_kwargs, training=training)
             grads_all += grads
             vars_all += vars_
 
@@ -97,31 +101,41 @@ class ReversibleBlock(tf.keras.Model):
         self.axis = split_along_axis        
         self.f = f_block
         self.g = g_block
-        self.seed =None # the drop out result should be the same in forward and backward
+        self.f_seed = None
+        self.g_seed = None
 
-    def call(self, x,  training=True, concat=True):
+    def call(self, x, layer_i,  f_args = {}, g_args = {}, training=True):
         """Apply residual block to inputs."""
-        self.seed = time.time()*1000.0
-        self.seed_2 = time.time()*10.0
+
+        #set the dropouted weights same in revesrible proccess
+        self.f_seed = time.time()
+        self.g_seed = time.time()*10.0
+
+
         x1, x2 = tf.split(x, num_or_size_splits=2, axis=self.axis)
 
-        f_x2 = self.f(x2, self.seed)
+
+        f_args['_reverse'] = g_args['_reverse'] = False
+        f_args['_layer_i'] = g_args['_layer_i'] = layer_i
+        f_args['_seed'] =  self.f_seed
+        g_args['_seed'] =  self.g_seed
+
+        f_x2 = self.f(x2, **f_args)
         y1 = f_x2 + x1
-        g_y1 = self.g(y1,self.seed_2   )
+        g_y1 = self.g(y1, **g_args)
         y2 = g_y1 + x2
+
 
         """
         self.x2 = x2
         self.x1 = x1
         self.f_x2 = f_x2
         """
-        if not concat:  # For correct backward grads
-            return y1, y2
 
         return tf.concat([y1, y2], axis=self.axis)
 
 
-    def backward_grads_and_vars(self, y, dy, training=True):
+    def backward_grads_and_vars(self, y, dy, layer_i, f_args = {}, g_args = {}, training=True):
 
         #Manually compute backward gradients given input and output grads.
         dy1, dy2 = tf.split(dy, num_or_size_splits=2, axis=self.axis)#split last dimension
@@ -130,6 +144,13 @@ class ReversibleBlock(tf.keras.Model):
         y1, y2 = tf.split(y, num_or_size_splits=2, axis=self.axis)  
         
         del y
+
+        f_args['_reverse'] = g_args['_reverse'] = True
+        f_args['_layer_i'] = g_args['_layer_i'] = layer_i
+        f_args['_seed'] =  self.f_seed
+        g_args['_seed'] =  self.g_seed
+
+
         #start rev_net backward
         f_ = self.f
         g_ =  self.g
@@ -142,7 +163,7 @@ class ReversibleBlock(tf.keras.Model):
             
             tape_2.watch(z1)
            
-            g_z1 = g_(z1, self.seed_2 )
+            g_z1 = g_(z1, **g_args )
         
 
         grad_result = tape_2.gradient(g_z1,g_weights+[z1],dy2)
@@ -164,7 +185,7 @@ class ReversibleBlock(tf.keras.Model):
         
         with tf.GradientTape() as tape_3:
             tape_3.watch(x2)
-            f_x2 = f_(x2, self.seed)
+            f_x2 = f_(x2,  **f_args)
     
         grad_result = tape_3.gradient(f_x2, f_weights+[x2],dx1)
         df_weights, dx2 = grad_result[:-1], grad_result[-1]

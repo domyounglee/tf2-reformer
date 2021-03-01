@@ -23,8 +23,34 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 from operator import mul
-from functools import reduce
+from functools import partial, reduce, wraps
 
+def default(val, default_val):
+    return default_val if val is None else val
+
+def cache_method_decorator(cache_attr, cache_namespace, reexecute = False):
+    def inner_fn(fn):
+        @wraps(fn)
+        def wrapper(self, *args, key_namespace=None, fetch=False, set_cache=True, **kwargs):
+            namespace_str = str(default(key_namespace, ''))
+            _cache = getattr(self, cache_attr)
+            _keyname = f'{cache_namespace}:{namespace_str}'
+
+            if fetch:
+                tf.print("flag2")
+                tf.print(key_namespace)
+
+
+                val = _cache[_keyname]
+                if reexecute:
+                    fn(self, *args, **kwargs)
+            else:
+                val = fn(self, *args, **kwargs)
+                if set_cache:
+                    setattr(self, cache_attr, {**_cache, **{_keyname: val}})
+            return val
+        return wrapper
+    return inner_fn
 
 def get_padding(x, padding_value=0, dtype=tf.float32):
     """Return float tensor representing the padding values in x.
@@ -116,12 +142,12 @@ class WithNorm(layers.Layer):
 
         self.fn = fn
 
-    def call(self, inputs,input_padding_mask=None):
+    def call(self, inputs,input_padding_mask=None,**kwargs):
         inputs = self.norm(inputs)
         if input_padding_mask is not None:
-            return self.fn(inputs,input_padding_mask)
+            return self.fn(inputs,input_padding_mask,**kwargs)
         else:
-            return self.fn(inputs)
+            return self.fn(inputs,**kwargs)
 
 class Chunk(layers.Layer):
     def __init__(self, chunks, fn, along_axis = -2):
@@ -130,14 +156,13 @@ class Chunk(layers.Layer):
         self.chunks = chunks
         self.fn = fn
 
-    def call(self, inputs, seed_):
-
+    def call(self, inputs, **kwargs):
         chunks = tf.split(inputs, self.chunks, axis= self.axis)
         #tf.print("chunk")
         #tf.print(inputs.shape)
         #tf.print(chunks[0].shape)
         #tf.print(len(chunks))
-        return tf.concat([self.fn(c, seed_) for i,c in enumerate(chunks)], axis = self.axis)
+        return tf.concat([self.fn(c,**kwargs) for i,c in enumerate(chunks)], axis = self.axis)
 
 
 class TF_AxialPositionalEmbedding(layers.Layer):

@@ -114,14 +114,18 @@ class TFSelfAttention(tf.keras.Model):
     def __init__(self, emb, heads = 8, causal = False):
         super().__init__()
         assert emb % heads == 0, 'dimensions must be divisible by number of heads'
+        tf.print("generate mha")
         self.attn = MultiHeadAttention(emb, heads)
         self.causal = causal
 
-    def call(self, inputs,  seed_):
+    def call(self, inputs,  **kwargs):
         b, t, e = inputs.shape
 
+        is_reverse = kwargs.pop('_reverse', False)
+        layer_i = kwargs.pop('_layer_i', None)
+        _seed = kwargs.pop('_seed', None)
 
-        output = self.attn({'qk' : inputs, 'v' : inputs}, seed_)
+        output = self.attn({'qk' : inputs, 'v' : inputs}, _seed)
         return output
 
 class TFFeedForward(tf.keras.Model):
@@ -133,14 +137,18 @@ class TFFeedForward(tf.keras.Model):
     def gelu_(self, x):
         return 0.5 * x * (1 + tf.math.tanh(tf.math.sqrt(2 / math.pi) * (x + 0.044715 * tf.math.pow(x, 3))))
  
-    def call(self, inputs, seed_2):
+    def call(self, inputs, **kwargs):
+        is_reverse = kwargs.pop('_reverse', False)
+        layer_i = kwargs.pop('_layer_i', None)
+        _seed = kwargs.pop('_seed', None)
+
         #tf.print("fdafdsaf")
         inputs = self.proj_in(inputs)
         inputs, inputs_v = tf.split(inputs, num_or_size_splits=2, axis=-1)
 
         inputs = self.gelu_(inputs) * inputs_v
 
-        tf.random.set_seed(seed_2)
+        tf.random.set_seed(_seed)
         inputs = tf.nn.dropout(inputs, rate=0.1,  name="ff_dropout")
         
 
