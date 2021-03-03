@@ -23,7 +23,7 @@ SELF_ATTN_INF_NEG = -5e4
 LOOK_AHEAD_ATTN_INF_NEG = -1e38
 import tensorflow as tf
 from tensorflow.keras.layers import Dropout, Dense
-from .TFutils import cache_method_decorator,sort_key_val, batched_index_select,merge_dims, make_unit_length, process_inputs_chunk,get_padding
+from .utils import cache_method_decorator,sort_key_val, batched_index_select,merge_dims, make_unit_length, process_inputs_chunk,get_padding
 class TFLSHAttention(tf.keras.Model):
     def __init__( self,
                   dropout = 0.,

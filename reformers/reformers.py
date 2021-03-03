@@ -22,9 +22,9 @@
 
 import tensorflow as tf
 from tensorflow.keras.layers import Embedding, LayerNormalization, Dense
-from .TFefficient_attention import TFLSHAttention, TFLSHSelfAttention
-from .TFattention import TFSelfAttention, TFFeedForward,MultiHeadAttention
-from .TFutils import cache_fn, Chunk, WithNorm, TF_AxialPositionalEmbedding
+from .efficient_attention import TFLSHAttention, TFLSHSelfAttention
+from .attention import TFSelfAttention, TFFeedForward,MultiHeadAttention
+from .utils import cache_fn, Chunk, WithNorm, TF_AxialPositionalEmbedding
 from .blocks import ReversibleBlock, ReversibleSequence
 import math
 class TFReformer(tf.keras.Model):
