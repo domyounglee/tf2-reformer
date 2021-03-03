@@ -35,8 +35,8 @@ BPE_TSV_PATH ="bpe_spm.tsv"
 BPE_MODEL_PATH = "bpe_model"
 DATASET_PATH = "enwik8.gz"
 
-VALIDATE_EVERY  = 100
-GENERATE_EVERY  = 1000
+VALIDATE_EVERY  = 1000
+GENERATE_EVERY  = 5000
 
 FLAGS = flags.FLAGS
 
@@ -45,7 +45,7 @@ flags.DEFINE_integer("vocab_size", 256,"vocab_size")
 flags.DEFINE_integer("embedding_size", 512,"Embedding size")
 flags.DEFINE_integer("top_k", 3,"Embedding size")
 flags.DEFINE_float("top_p", 0.9,"Embedding size")
-flags.DEFINE_integer("seq_len", 3072,"Embedding size")
+flags.DEFINE_integer("seq_len", 4096,"Embedding size")
 flags.DEFINE_integer("epoch", 100000,"Embedding size")
 flags.DEFINE_bool("restore", False, "s")
 
