@@ -37,10 +37,6 @@ def cache_method_decorator(cache_attr, cache_namespace, reexecute = False):
             _keyname = f'{cache_namespace}:{namespace_str}'
 
             if fetch:
-                tf.print("flag2")
-                tf.print(key_namespace)
-
-
                 val = _cache[_keyname]
                 if reexecute:
                     fn(self, *args, **kwargs)

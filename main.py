@@ -14,7 +14,7 @@ from absl import flags
 from absl import logging
 import random
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 physical_devices = tf.config.list_physical_devices('GPU')
 try:

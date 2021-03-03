@@ -117,9 +117,7 @@ class TFLSHAttention(tf.keras.Model):
         layer_i = kwargs.pop('_layer_i', None)
         _seed = kwargs.pop('_seed', None)
 
-        tf.print("=="*100)
-        tf.print(layer_i)
-        tf.print(_seed)
+
         self.seed_ = _seed
         tf.random.set_seed(self.seed_)
 
@@ -131,11 +129,10 @@ class TFLSHAttention(tf.keras.Model):
 
 
 
-        #buckets = self.hash_vectors(n_buckets, qk, key_namespace=layer_i, fetch=is_reverse, set_cache=self.training)
-        buckets = self.hash_vectors(n_buckets, qk)
+        buckets = self.hash_vectors(n_buckets, qk, key_namespace=layer_i, fetch=is_reverse, set_cache=self.training)
+        #buckets = self.hash_vectors(n_buckets, qk)
         # We use the same vector as both a query and a key.
         assert int(buckets.shape[1]) == seqlen * self.n_hashes 
-        tf.print(buckets)
         ticker = tf.expand_dims(tf.range(seqlen * self.n_hashes ), axis=0)
         buckets_and_t = seqlen * buckets + tf.cast((ticker % seqlen), tf.int64)#to sort q by bucket number and by seq length
 
@@ -188,7 +185,7 @@ class TFLSHAttention(tf.keras.Model):
         #tf.print("asfd"*100)
         #tf.print(self.causal)
         
-        """
+        
         if self.causal:
    
             mask = bq_t[:, :, :, None] < bkv_t[:, :, None, :] #index 관한 마스크 >t 인것들 마스킹 
@@ -214,7 +211,7 @@ class TFLSHAttention(tf.keras.Model):
             
             #tf.print(dots)
             #tf.print(bucket_mask)
-        """
+        
 
 
         dots_logsumexp = tf.math.reduce_logsumexp(dots, axis=-1, keepdims=True) #2*bucket_size 에 대한 partition function 
