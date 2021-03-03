@@ -57,5 +57,4 @@ the main.py code includes generation code and you only generate the sequence wit
 
   https://github.com/cerebroai/reformers
 
-  https://github.com/cerebroai/reformers
-
+  https://github.com/lucidrains/reformer-pytorch
