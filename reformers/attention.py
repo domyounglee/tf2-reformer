@@ -1,126 +1,158 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+# MIT License
 
-class Attention(nn.Module):
-    """ Applies attention mechanism on the `context` using the `query`.
+# Copyright (c) 2020 Streack, Jayakrishna Sahit
 
-    **Thank you** to IBM for their initial implementation of :class:`Attention`. Here is
-    their `License
-    <https://github.com/IBM/pytorch-seq2seq/blob/master/LICENSE>`__.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 
-    Args:
-        dimensions (int): Dimensionality of the query and context.
-        attention_type (str, optional): How to compute the attention score:
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
 
-            * dot: :math:`score(H_j,q) = H_j^T q`
-            * general: :math:`score(H_j, q) = H_j^T W_a q`
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
-    Example:
+import math
+import tensorflow as tf
+from tensorflow.keras.layers import Dense
 
-         >>> attention = Attention(256)
-         >>> query = torch.randn(5, 1, 256)
-         >>> context = torch.randn(5, 5, 256)
-         >>> output, weights = attention(query, context)
-         >>> output.size()
-         torch.Size([5, 1, 256])
-         >>> weights.size()
-         torch.Size([5, 1, 5])
-    """
+SELF_ATTN_INF_NEG = -5e4
+LOOK_AHEAD_ATTN_INF_NEG = -1e38
+def mask_fill_inf(matrix, mask):
+    negmask = 1 - mask
+    num = 3.4 * math.pow(10, 38)
+    return (matrix * mask) + (-((negmask * num + num) - num))
 
-    def __init__(self, dimensions, attention_type='general'):
-        super().__init__()
+class MultiHeadAttention(tf.keras.Model):
 
-        if attention_type not in ['dot', 'general']:
-            raise ValueError('Invalid attention type selected.')
+    def __init__(self, d_model, num_heads, name="multi_head_attention"):
+        super(MultiHeadAttention, self).__init__(name=name)
+        self.num_heads = num_heads
+        self.d_model = d_model
 
-        self.attention_type = attention_type
-        if self.attention_type == 'general':
-            self.linear_in = nn.Linear(dimensions, dimensions, bias=False)
+        assert d_model % self.num_heads == 0
+        self.depth = d_model // self.num_heads
+        self.qk_dense = Dense(units=d_model, use_bias=False)
+        self.value_dense = Dense(units=d_model, use_bias=False)
+        self.dense = Dense(units=d_model)
+        self.layer_num= None 
+        self.seed = None 
 
-        self.linear_out = nn.Linear(dimensions * 2, dimensions, bias=False)
-        self.softmax = nn.Softmax(dim=-1)
-        self.tanh = nn.Tanh()
 
-    def forward(self, query, context):
-        """
-        Args:
-            query (:class:`torch.FloatTensor` [batch size, output length, dimensions]): Sequence of
-                queries to query the context.
-            context (:class:`torch.FloatTensor` [batch size, query length, dimensions]): Data
-                overwhich to apply the attention mechanism.
+    def merge_heads(self,v,batch_size):
+        return tf.reshape(tf.transpose(v, perm=[0, 2, 1, 3]), (batch_size , -1, self.d_model)) 
 
-        Returns:
-            :class:`tuple` with `output` and `weights`:
-            * **output** (:class:`torch.LongTensor` [batch size, output length, dimensions]):
-              Tensor containing the attended features.
-            * **weights** (:class:`torch.FloatTensor` [batch size, output length, query length]):
-              Tensor containing attention weights.
-        """
-        batch_size, output_len, dimensions = query.size()
-        query_len = context.size(1)
+    def split_heads(self,v,batch_size):
+        return tf.transpose(tf.reshape(v, (batch_size, -1, self.num_heads, self.depth)), perm=[0, 2, 1, 3])
 
-        if self.attention_type == "general":
-            query = query.reshape(batch_size * output_len, dimensions)
-            query = self.linear_in(query)
-            query = query.reshape(batch_size, output_len, dimensions)
 
-        # TODO: Include mask on PADDING_INDEX?
+    def scaled_dot_product(self, qk, v):
+        qk_norm,_ = tf.linalg.normalize(qk, 2, axis=-1)
+        matmul_qk = tf.matmul(qk, qk_norm, transpose_b=True)  # (..., seq_len_q, seq_len_k)
 
-        # (batch_size, output_len, dimensions) * (batch_size, query_len, dimensions) ->
-        # (batch_size, output_len, query_len)
-        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
+        dk = tf.cast(tf.shape(qk)[-1], tf.float32)
+        scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+        
+        def create_self_mask(size):
+             #to just see  < t elements
+            self_mask = tf.linalg.band_part(tf.ones((size, size)), 0, 0) # for qk attention 
+            
+            return self_mask  # (seq_len, seq_len) 
+        self_mask = create_self_mask(tf.shape(qk)[-2])
 
-        # Compute weights across every context sequence
-        attention_scores = attention_scores.view(batch_size * output_len, query_len)
-        attention_weights = self.softmax(attention_scores)
-        attention_weights = attention_weights.view(batch_size, output_len, query_len)
+        def create_look_ahead_mask(size):
+             #to just see  < t elements
+            mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0) # 1's on >t 
 
-        # (batch_size, output_len, query_len) * (batch_size, query_len, dimensions) ->
-        # (batch_size, output_len, dimensions)
-        mix = torch.bmm(attention_weights, context)
+            return mask  # (seq_len, seq_len) 
+        mask = create_look_ahead_mask(tf.shape(qk)[-2])
+      
+        scaled_attention_logits += (mask * LOOK_AHEAD_ATTN_INF_NEG) + (self_mask  * SELF_ATTN_INF_NEG)
 
-        # concat -> (batch_size * output_len, 2*dimensions)
-        combined = torch.cat((mix, query), dim=2)
-        combined = combined.view(batch_size * output_len, 2 * dimensions)
 
-        # Apply linear_out on every 2nd dimension of concat
-        # output -> (batch_size, output_len, dimensions)
-        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
-        output = self.tanh(output)
+        attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
+        
+        tf.random.set_seed(self.seed)
+        attention_weights_ = tf.nn.dropout(attention_weights, rate=0.1,  name="attn_dropout")
 
-        return output, attention_weights
+        output = tf.matmul(attention_weights_, v)  # (..., seq_len_q, depth_v)
 
-class SelfAttention(nn.Module):
+        
+
+        return output, attention_weights_
+
+    def call(self, inputs, seed_):
+        self.seed =seed_ 
+        qk,  v = inputs['qk'], inputs['v']
+
+        batch_size = tf.shape(qk)[0]
+        dim = tf.shape(qk)[-1]
+        # linear layers
+        qk = self.qk_dense(qk)
+        v = self.value_dense(v)
+
+        # split heads
+        qk = self.split_heads(qk, batch_size)
+        v = self.split_heads(v, batch_size)
+        #tf.print(qk)
+        output, attention_map = self.scaled_dot_product(qk, v)
+
+        scaled_attention = self.merge_heads(output,batch_size)
+        outputs = self.dense(scaled_attention)
+        return outputs
+
+
+class TFSelfAttention(tf.keras.Model):
     def __init__(self, emb, heads = 8, causal = False):
         super().__init__()
         assert emb % heads == 0, 'dimensions must be divisible by number of heads'
-        self.attn = nn.MultiheadAttention(emb, heads)
-        self.to_out = nn.Linear(emb, emb)
+        tf.print("generate mha")
+        self.attn = MultiHeadAttention(emb, heads)
         self.causal = causal
 
-    def forward(self, x):
-        b, t, e = x.shape
-        x = x.transpose(0, 1)
+    def call(self, inputs,  **kwargs):
+        b, t, e = inputs.shape
 
-        attn_mask = torch.zeros(t, t, device=x.device)
-        if self.causal:
-            causal_mask = torch.triu(torch.ones(t, t, device=x.device) == 1, 1)
-            attn_mask.masked_fill_(causal_mask == 1, float('-inf'))
+        is_reverse = kwargs.pop('_reverse', False)
+        layer_i = kwargs.pop('_layer_i', None)
+        _seed = kwargs.pop('_seed', None)
 
-        output, _ = self.attn(x, x, x, attn_mask = attn_mask)
-        return self.to_out(output.transpose(0, 1))
+        output = self.attn({'qk' : inputs, 'v' : inputs}, _seed)
+        return output
 
-
-class FeedForward(nn.Module):
-    def __init__(self, emb, mult = 4):
+class TFFeedForward(tf.keras.Model):
+    def __init__(self, emb, mult = 8):
         super().__init__()
         self.emb = emb
-        self.proj_in = nn.Linear(emb, emb * mult)
-        self.proj_out = nn.Linear(emb * mult, emb)
+        self.proj_in = Dense(emb * mult)
+        self.proj_out = Dense(emb)
+    def gelu_(self, x):
+        return 0.5 * x * (1 + tf.math.tanh(tf.math.sqrt(2 / math.pi) * (x + 0.044715 * tf.math.pow(x, 3))))
+ 
+    def call(self, inputs, **kwargs):
+        is_reverse = kwargs.pop('_reverse', False)
+        layer_i = kwargs.pop('_layer_i', None)
+        _seed = kwargs.pop('_seed', None)
 
-    def forward(self, x):
-        x = self.proj_in(x)
-        x = F.gelu(x)
-        x = self.proj_out(x)
-        return x
+        #tf.print("fdafdsaf")
+        inputs = self.proj_in(inputs)
+        inputs, inputs_v = tf.split(inputs, num_or_size_splits=2, axis=-1)
+
+        inputs = self.gelu_(inputs) * inputs_v
+
+        tf.random.set_seed(_seed)
+        inputs = tf.nn.dropout(inputs, rate=0.1,  name="ff_dropout")
+        
+
+
+
+        inputs = self.proj_out(inputs)
+        return inputs

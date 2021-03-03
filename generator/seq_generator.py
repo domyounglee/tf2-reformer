@@ -5,9 +5,8 @@ import json
 from absl import app
 from absl import flags
 from absl import logging
-from reformers.TFreformers import TFReformerLM
 from SequenceGenerator import SequenceGenerator
-from reformers.TFreformers import TFReformerLM, TFLSHAttention
+from reformers.reformers import TFReformerLM, TFLSHAttention
 import numpy as np 
 import gzip
 from collections import Counter

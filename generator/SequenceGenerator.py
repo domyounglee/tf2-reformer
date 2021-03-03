@@ -2,7 +2,7 @@ import tensorflow as tf
 import sentencepiece as spm
 import json
 import math
-from reformers.TFreformers import TFReformerLM
+from reformers.reformers import TFReformerLM
 
 
 def decode_token(token):

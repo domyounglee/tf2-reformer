@@ -1,4 +1,4 @@
-from reformers.TFreformers import TFReformerLM, TFLSHAttention
+from reformers.reformers import TFReformerLM, TFLSHAttention
 import tensorflow as tf
 import numpy as np 
 import gzip

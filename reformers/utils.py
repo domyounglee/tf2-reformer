@@ -1,6 +1,6 @@
 # MIT License
 
-# Copyright (c) 2020 Phillip Wang, 2020 Streack, Jayakrishna Sahit
+# Copyright (c) 2020 Streack, Jayakrishna Sahit
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,35 +20,77 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Function
+import tensorflow as tf
+from tensorflow.keras import layers
+from operator import mul
+from functools import partial, reduce, wraps
+
+def default(val, default_val):
+    return default_val if val is None else val
+
+def cache_method_decorator(cache_attr, cache_namespace, reexecute = False):
+    def inner_fn(fn):
+        @wraps(fn)
+        def wrapper(self, *args, key_namespace=None, fetch=False, set_cache=True, **kwargs):
+            namespace_str = str(default(key_namespace, ''))
+            _cache = getattr(self, cache_attr)
+            _keyname = f'{cache_namespace}:{namespace_str}'
+
+            if fetch:
+                val = _cache[_keyname]
+                if reexecute:
+                    fn(self, *args, **kwargs)
+            else:
+                val = fn(self, *args, **kwargs)
+                if set_cache:
+                    setattr(self, cache_attr, {**_cache, **{_keyname: val}})
+            return val
+        return wrapper
+    return inner_fn
+
+def get_padding(x, padding_value=0, dtype=tf.float32):
+    """Return float tensor representing the padding values in x.
+    Args:
+    x: int tensor with any shape
+    padding_value: int value that
+    dtype: The dtype of the return value.
+    Returns:
+    float tensor with same shape as x containing values 0 or 1.
+    0 -> non-padding, 1 -> padding
+    """
+    return tf.cast(tf.equal(x, padding_value), dtype)
 
 def make_unit_length(x, epsilon=1e-6):
-    norm = x.norm(p=2, dim=-1, keepdim=True)
-    return x.div(norm + epsilon)
+    norm = tf.norm(x,  ord=2, axis=-1, keepdims=True)
+    return tf.math.truediv(x, norm + epsilon)
+def sort_key_val(t1, t2, axis=-1):
 
-def sort_key_val(t1, t2, dim=-1):
-    values, indices = t1.sort(dim=dim)
-    t2 = t2.expand_as(t1)
-    return values, t2.gather(dim, indices)
+    values = tf.sort(t1, axis=axis)
+    
+    offset=tf.range(t1.shape[0])*t1.shape[1]
+    offset=tf.reshape(offset,[-1,1])
+    offset=tf.broadcast_to(offset, t1.shape)
+
+    t2 = tf.broadcast_to(t2, t1.shape)
+
+    return values, tf.gather(tf.reshape(t2,[-1]), tf.argsort(t1, axis=axis)+offset, axis=axis)
 
 def batched_index_select(values, indices):
+
+    seq_len = values.shape[1]
     last_dim = values.shape[-1]
-    return values.gather(1, indices[:, :, None].expand(-1, -1, last_dim))
 
-def process_inputs_chunk(fn, *args, chunks=1):
-    chunked_inputs = list(map(lambda x: x.chunk(chunks, dim=0), args))
-    print(len(list(zip(*chunked_inputs))[0]))
-    outputs = [fn(*input_pair) for input_pair in zip(*chunked_inputs)]
+    offset=tf.range(indices.shape[0])*seq_len
+    offset=tf.reshape(offset,[-1,1])
+    offset=tf.broadcast_to(offset, indices.shape)
+    
+    flatten_values = tf.reshape(values,[-1,last_dim])
+    return tf.gather(flatten_values, indices+offset)
+
+def process_inputs_chunk(fn, *args, seed_=None, chunks=1):
+    chunked_inputs = list(map(lambda x: tf.split(x, chunks, axis=-2), args))
+    outputs = [fn(*input_pair, seed_) for i,input_pair in enumerate(zip(*chunked_inputs))] #chunking 된 q ,kv 끼리 묶여서 input_pair를 만든다. 
     return outputs
-
-def chunked_sum(tensor, chunks=1):
-    *orig_size, last_dim = tensor.shape
-    tensor = tensor.reshape(-1, last_dim)
-    summed_tensors = [c.sum(dim=-1) for c in tensor.chunk(chunks, dim=0)]
-    return torch.cat(summed_tensors, dim=0).reshape(orig_size)
 
 def cache_fn(f):
     cache = None
@@ -60,34 +102,135 @@ def cache_fn(f):
         return cache
     return cached_fn
 
+def merge_dims(ind_from, ind_to, tensor):
+    shape = list(tensor.shape)
+    arr_slice = slice(ind_from, ind_to + 1)
+    shape[arr_slice] = [reduce(mul, shape[arr_slice])]
+    return tf.reshape(tensor,tuple(shape))
 
-class ScaleNorm(nn.Module):
-    def __init__(self, emb, eps=1e-5):
-        super().__init__()
-        self.g = nn.Parameter(torch.ones(1, requires_grad=True))
+def split_dims(ind_from, ind_to, tensor):
+    shape = list(tensor.shape)
+    arr_slice = slice(ind_from, ind_to + 1)
+    shape[arr_slice] = [reduce(mul, shape[arr_slice])]
+    return tf.reshape(tensor,tuple(shape))
+
+
+class ScaleNorm(layers.Layer):
+    def __init__(self, emb, eps):
+        super(ScaleNorm, self).__init__()
+        self.g = tf.Variable(initial_value=w_init(shape=(1,),
+                        dtype='float32'),
+                        trainable=True)
         self.eps = eps
 
-    def forward(self, x):
-        n = torch.norm(x, dim=-1, keepdim=True).clamp(min=self.eps)
+    def call(self, inputs):
+        n = tf.norm(inputs, axis=-1, keepdims=True).clip_by_value(min=self.eps)
         return x / n * self.g
 
-class WithNorm(nn.Module):
+class WithNorm(layers.Layer):
     def __init__(self, norm_class, emb, fn):
-        super().__init__()
+        super(WithNorm, self).__init__()
         self.emb = emb
-        self.norm = norm_class(emb)
-        self.fn = fn
-    def forward(self, x):
-        x = self.norm(x)
-        return self.fn(x)
+        if isinstance(norm_class, ScaleNorm):
+            self.norm = norm_class(emb)
+        else:
+            self.norm = norm_class()
 
-class Chunk(nn.Module):
-    def __init__(self, chunks, fn, along_dim = -1):
-        super().__init__()
-        self.dim = along_dim
+        self.fn = fn
+
+    def call(self, inputs,input_padding_mask=None,**kwargs):
+        inputs = self.norm(inputs)
+        if input_padding_mask is not None:
+            return self.fn(inputs,input_padding_mask,**kwargs)
+        else:
+            return self.fn(inputs,**kwargs)
+
+class Chunk(layers.Layer):
+    def __init__(self, chunks, fn, along_axis = -2):
+        super(Chunk, self).__init__()
+        self.axis = along_axis
         self.chunks = chunks
         self.fn = fn
 
-    def forward(self, x):
-        chunks = x.chunk(self.chunks, dim = self.dim)
-        return torch.cat([self.fn(c) for c in chunks], dim = self.dim)
+    def call(self, inputs, **kwargs):
+        chunks = tf.split(inputs, self.chunks, axis= self.axis)
+        #tf.print("chunk")
+        #tf.print(inputs.shape)
+        #tf.print(chunks[0].shape)
+        #tf.print(len(chunks))
+        return tf.concat([self.fn(c,**kwargs) for i,c in enumerate(chunks)], axis = self.axis)
+
+
+class TF_AxialPositionalEmbedding(layers.Layer):
+    def __init__(self, dim, axial_shape, axial_dims = None):
+        super().__init__()
+
+        self.dim = dim
+        self.shape = axial_shape
+        self.max_seq_len = reduce(mul, axial_shape, 1)
+
+        self.summed = axial_dims is None
+        axial_dims = ((dim,) * len(axial_shape)) if self.summed else axial_dims
+
+        assert len(self.shape) == len(axial_dims), 'number of axial dimensions must equal the number of dimensions in the shape'
+        assert self.summed or not self.summed and sum(axial_dims) == dim, f'axial dimensions must sum up to the target dimension {dim}'
+
+        self.weights_ = ParameterList(self, 'weights', len(axial_shape))
+
+        for ind, (shape, axial_dim) in enumerate(zip(self.shape, axial_dims)):
+            ax_shape = [1] * len(self.shape)
+            ax_shape[ind] = shape
+            ax_shape = (1, *ax_shape, axial_dim)
+
+
+
+
+
+
+            initializer = tf.keras.initializers.RandomNormal(mean=0., stddev=1.)
+            init_values = initializer(shape=ax_shape)
+            ax_emb = tf.Variable(
+                                name=f"ax_emb_{ind}", 
+                                 initial_value=init_values, 
+                                 dtype=tf.float32
+                                )
+
+            #ax_emb = nn.Parameter(torch.zeros(ax_shape).normal_(0, 1))
+            self.weights_.append(ax_emb)
+
+    def call(self, x):
+        b, t, e = x.shape
+        assert (t <= self.max_seq_len), f'Sequence length ({t}) must be less than the maximum sequence length allowed ({self.max_seq_len})'
+        embs = []
+        for ind, ax_emb in enumerate(self.weights_.to_list()):
+            axial_dim = ax_emb.shape[-1]
+            ax_shape = list(self.shape)
+            ax_shape[ind] = 1
+            expand_shape = tf.constant((b, *ax_shape, 1),tf.int32)
+            #emb = ax_emb.expand(expand_shape).reshape(b, self.max_seq_len, axial_dim)
+
+            emb = tf.reshape(tf.tile(ax_emb,expand_shape),(b, self.max_seq_len, axial_dim))
+            embs.append(emb)
+
+        pos_emb = sum(embs) if self.summed else tf.concat(embs, axis=-1)
+        return pos_emb[:, :t]
+
+# a mock parameter list object until below issue is resolved
+# https://github.com/pytorch/pytorch/issues/36035
+class ParameterList(object):
+    def __init__(self, kls, prefix, length):
+        self.ind = 0
+        self.kls = kls
+        self.prefix = prefix
+        self.length = length
+
+    def _keyname(self, prefix, ind):
+        return f'{prefix}_{ind}'
+
+    def append(self, x):
+        setattr(self.kls, self._keyname(self.prefix, self.ind), x)
+        self.ind += 1
+
+    def to_list(self):
+        return [getattr(self.kls, self._keyname(self.prefix, i)) for i in range(self.length)]
+
