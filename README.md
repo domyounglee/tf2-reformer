@@ -44,10 +44,10 @@ You only need Tesla V100 of 16G to run the reformer model with above settings on
 
 ### train 
 ```
-	python main.py
+python main.py
 ```
 
-the main.py code includes generation code and you can only generation with generator/seq_generator.py 
+the main.py code includes generation code and you only generate the sequence with generator/seq_generator.py 
 
 ## Reference
 
@@ -58,4 +58,4 @@ the main.py code includes generation code and you can only generation with gener
   https://github.com/cerebroai/reformers
 
   https://github.com/cerebroai/reformers
-  
+
