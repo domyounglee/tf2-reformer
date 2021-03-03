@@ -47,7 +47,7 @@ You only need Tesla V100 of 16G to run the reformer model with above settings on
 python main.py
 ```
 
-the main.py code includes generation code and you only generate the sequence with generator/seq_generator.py 
+the main.py code includes generation code and you can generate the sequence with generator/seq_generator.py 
 
 ## Reference
 
