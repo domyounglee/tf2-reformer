@@ -8,7 +8,7 @@ Tensorflow >= 2.3.0
 
 ## Usage
 
-### use Docker >= 19.02
+### use Docker >= 19.03
 
     docker pull tensorflow/tensorflow:2.3.0-gpu
     ./docker_tf2.sh
