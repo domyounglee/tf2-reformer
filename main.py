@@ -8,13 +8,13 @@ import sentencepiece as spm
 import os 
 import functools
 import sys 
-from SequenceGenerator import SequenceGenerator
+from generator.SequenceGenerator import SequenceGenerator
 from absl import app
 from absl import flags
 from absl import logging
 import random
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 physical_devices = tf.config.list_physical_devices('GPU')
 try:
