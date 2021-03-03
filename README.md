@@ -1,6 +1,6 @@
 # Reformer TF2
 
-Reproduced the [Reformer](https://arxiv.org/abs/2001.04451) in tf2 
+Implementation of the [Reformer](https://arxiv.org/abs/2001.04451) in tf2 
 
 ## Dependancy 
 
