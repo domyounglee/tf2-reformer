@@ -4,7 +4,6 @@ import numpy as np
 import gzip
 from collections import Counter
 import csv
-import sentencepiece as spm
 import os 
 import functools
 import sys 
